@@ -14,10 +14,10 @@ starting its own.
 Where these documents do not decide something, the owning node decides it and
 records the choice, so the dependant reviews it instead of discovering it.
 -> checkpoint
-@guidance text/markdown human-authored-specs/vocabulary.md
-@guidance text/markdown human-authored-specs/architecture.md
-@guidance text/markdown human-authored-specs/initial-spec.md
-@guidance text/markdown human-authored-specs/lifecycle.md
+@guidance text/markdown docs/product-planning/vocabulary.md
+@guidance text/markdown docs/product-planning/architecture.md
+@guidance text/markdown docs/product-planning/initial-spec.md
+@guidance text/markdown docs/product-planning/lifecycle.md
 ---
 [model] Choose the model (complete)
 Pick the embedding model from the shortlist, on published benchmarks.
@@ -358,7 +358,7 @@ Known by: a decision recorded with what it was made from.
 -> mend-slice
 -> mend-surface
 -> tests
-> The library checkpoint is met by 123 unit tests and 10 dependency-facing tests passing, with cargo fmt --all -- --check, cargo clippy --workspace --all-targets --all-features -- -D warnings, cargo doc --workspace --no-deps, and cargo deny check passing on 2026-08-21. cargo deny reports duplicate-version warnings but no policy failures. The separate command remains outside this graph; MCP is the next delivery and its contract and execution record are in human-authored-specs/mcp.md and mcp.vine.
+> The library checkpoint is met by 123 unit tests and 10 dependency-facing tests passing, with cargo fmt --all -- --check, cargo clippy --workspace --all-targets --all-features -- -D warnings, cargo doc --workspace --no-deps, and cargo deny check passing on 2026-08-21. cargo deny reports duplicate-version warnings but no policy failures. The separate command remains outside this graph; MCP is the next delivery and its contract and execution record are in docs/product-planning/mcp.md and mcp.vine.
 ---
 [mend-slice] Make an oversized chunk unconstructible (complete)
 Hold the chunk limit where it cannot be forgotten.

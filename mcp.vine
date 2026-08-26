@@ -9,10 +9,10 @@ Each node records the boundary it owns and the check that made it true.
 This graph ends at process-level MCP validation. VS Code host registration and
 Chat invocation are separate lifecycle stages documented in lifecycle.md.
 -> e2e
-@guidance text/markdown human-authored-specs/mcp.md
-@guidance text/markdown human-authored-specs/architecture.md
-@guidance text/markdown human-authored-specs/vocabulary.md
-@guidance text/markdown human-authored-specs/lifecycle.md
+@guidance text/markdown docs/product-planning/mcp.md
+@guidance text/markdown docs/product-planning/architecture.md
+@guidance text/markdown docs/product-planning/vocabulary.md
+@guidance text/markdown docs/product-planning/lifecycle.md
 ---
 [protocol] Speak MCP over stdio (complete)
 Implement the JSON-RPC and MCP lifecycle boundary.

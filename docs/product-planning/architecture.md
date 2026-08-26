@@ -9,6 +9,13 @@ The ordered project and runtime map is [lifecycle.md](lifecycle.md). The
 library checkpoint is complete and the next delivery is the served tool as MCP;
 a separate human-facing command has no contract or implementation yet.
 
+## Target workflows
+
+The target workflows are Research, Developer, and Analyst. Their stated needs
+are recorded in [personas.md](personas.md). They use the same corpus and MCP
+contract; they are not separate products. A feature that makes one target
+workflow harder is a design problem to resolve before adoption.
+
 ## State
 
 `$corpus` is the only state: one `document` per `origin`, and beside each one a

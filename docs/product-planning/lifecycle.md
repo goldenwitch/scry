@@ -40,7 +40,7 @@ the executable tests or the work graphs.
 
 ## 4. Build the library
 
-Execute [library.vine](../library.vine). Its dependency edges order the work:
+Execute [library.vine](../../library.vine). Its dependency edges order the work:
 primitive types and the model come before slicing and embedding; those parts
 come before storage and verbs; the verbs come before the library checkpoint.
 
@@ -75,7 +75,7 @@ thing that authorizes the next delivery; a passing part test alone does not.
 
 ## 6. Define and build MCP
 
-Read [mcp.md](mcp.md) and execute [mcp.vine](../mcp.vine). The MCP adapter is a
+Read [mcp.md](mcp.md) and execute [mcp.vine](../../mcp.vine). The MCP adapter is a
 separate workspace member, so it can depend only on the public `scry` API. Its
 startup sequence is:
 
@@ -113,7 +113,7 @@ connected without reaching into private store operations.
 
 ## 7. Register MCP in VS Code
 
-The workspace registration is [`.vscode/mcp.json`](../.vscode/mcp.json). It is
+The workspace registration is [`.vscode/mcp.json`](../../.vscode/mcp.json). It is
 host configuration, not part of the MCP protocol and not a Chat prompt. It tells
 VS Code to run:
 
@@ -140,8 +140,13 @@ Chat prompt and is not the way to start an MCP server. The MCP server exposes
 `tools`, not `prompts`.
 
 The current editor evidence checks that the server reaches `Running` and that
-VS Code reports `Discovered 5 tools`. That is discovery validation. It is
-separate from validating a model-generated Chat request.
+VS Code reports `Discovered 5 tools`, and a manual Chat invocation has used the
+registered tools. That is host validation. It is separate from the process-level
+test and from a harness-level automated test.
+
+The harness support matrix is [harness-support.md](../harness-support.md). It
+records the target harnesses, current setup instructions, and the distinction
+between process-level CI and host-level checks.
 
 ## 8. Invoke a tool from Chat
 
