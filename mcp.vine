@@ -1,0 +1,72 @@
+vine 1.2.0
+prefix: mcp
+title: scry over MCP
+---
+[root] scry over MCP (complete)
+The second delivery stage: expose the completed scry library through a caller
+facing MCP stdio process. A separate human-facing command remains unplanned.
+Each node records the boundary it owns and the check that made it true.
+This graph ends at process-level MCP validation. VS Code host registration and
+Chat invocation are separate lifecycle stages documented in lifecycle.md.
+-> e2e
+@guidance text/markdown human-authored-specs/mcp.md
+@guidance text/markdown human-authored-specs/architecture.md
+@guidance text/markdown human-authored-specs/vocabulary.md
+@guidance text/markdown human-authored-specs/lifecycle.md
+---
+[protocol] Speak MCP over stdio (complete)
+Implement the JSON-RPC and MCP lifecycle boundary.
+Serves: an MCP client can initialize the server and discover its tools.
+Absent: the library has no process protocol an agent can call.
+Known by: initialize, notifications/initialized, ping, tools/list, and
+ tools/call are newline-delimited JSON-RPC messages with no stdout logging.
+> The supported MCP protocol version is 2025-06-18.
+> Protocol failures are JSON-RPC errors; tool execution failures are successful
+> tools/call responses with isError true, so an agent can inspect a refusal.
+> The server advertises exactly one tool for each public library verb.
+---
+[handle-wire] Carry handles across messages (complete)
+Give a returned handle a stable MCP representation and reconstruct it at the
+next tool call.
+Serves: provenance and neighbours can consume a handle returned by search.
+Absent: the MCP process would be able to return a handle but not use it.
+Known by: a handle survives JSON serialization and rehydration, while a
+reversed span or malformed digest is rejected before a library verb runs.
+-> protocol
+> The wire object is origin, start, end, and lower-case hexadecimal digest.
+> The core library owns Handle::from_parts. It validates only the structural
+> span order; the library verbs retain the decision between Stale and Gone.
+---
+[adapter] Compose the public library into tools (complete)
+Build the scry-mcp binary and its five tools over the public scry API.
+Serves: an MCP client can add, delete, search, widen, and trace corpus content.
+Absent: the protocol would terminate at metadata rather than reach the corpus.
+Known by: the process requires explicit store and model-cache paths, loads the
+pinned embed seam once, opens the store, and keeps all store internals private.
+-> protocol
+-> handle-wire
+> The binary is a separate workspace member, so this boundary cannot use
+> crates/scry private operations. It uses serde and serde_json from centralized
+> workspace dependencies.
+> Tool arguments are strict objects. ttl_seconds is explicit, count is positive,
+> and successful results use structuredContent with a text content item beside it.
+> Startup incompatibility ends before an MCP session, matching the library's
+> terminal open result rather than inventing a tool refusal.
+---
+[e2e] Drive the real process (complete)
+Validate the complete library flow through the actual MCP binary.
+Serves: the MCP adapter is more than a parser and the library remains usable
+through a process boundary.
+Absent: protocol tests could pass while add, handle exchange, persistence, or
+refusals were disconnected.
+Known by: one spawned-process test performs initialize, tool discovery, add,
+search, provenance, neighbours, delete, and the resulting Gone response over a
+real redb file and real model seam.
+-> adapter
+> The test takes the handle from search structuredContent and sends it back as
+> the provenance and neighbours argument, so handle serialization is measured.
+> The test uses the model cache filled by the library suite when present and
+> downloads the pinned files on a clean machine; it claims no hermetic run.
+> Measured on 2026-08-21: the MCP test passes, the workspace has 123 library
+> unit tests, 10 library integration tests, and 1 MCP integration test, and
+> formatting, clippy, docs, and cargo-deny all pass.

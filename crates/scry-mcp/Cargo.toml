@@ -1,0 +1,16 @@
+[package]
+name = "scry-mcp"
+version = "0.1.0"
+description = "An MCP stdio server for the scry corpus library."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+scry = { path = "../scry", version = "0.1.0" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

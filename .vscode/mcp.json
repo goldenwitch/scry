@@ -1,0 +1,22 @@
+{
+    "servers": {
+        "scry": {
+            "type": "stdio",
+            "command": "cargo",
+            "args": [
+                "run",
+                "--quiet",
+                "--manifest-path",
+                "${workspaceFolder}/Cargo.toml",
+                "--package",
+                "scry-mcp",
+                "--",
+                "--store",
+                "${workspaceFolder}/scry.redb",
+                "--cache",
+                "${userHome}/.cache/scry-model-cache"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    }
+}

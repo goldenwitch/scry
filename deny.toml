@@ -1,0 +1,48 @@
+# cargo-deny: what may enter the tree.
+#
+# The allow-list is the set of licences the current tree actually carries, and
+# nothing else. A licence nobody depends on is not permission granted in
+# advance; it is a line that would let one arrive unnoticed. When a new
+# dependency brings a new licence, this file changes in the same commit and the
+# change is the review.
+
+[graph]
+all-features = false
+no-default-features = false
+
+[advisories]
+version = 2
+# One entry, and it is a maintenance status rather than a vulnerability:
+# `paste` is archived, and it arrives through tokenizers under fastembed, so
+# no change here removes it. It is a compile-time macro helper with no
+# runtime surface. The ignore ends when fastembed's tree stops carrying it,
+# and a vulnerability against it would be a different decision made again.
+ignore = ["RUSTSEC-2024-0436"]
+
+[licenses]
+version = 2
+confidence-threshold = 0.93
+# Every entry is here because a crate in the current tree cannot be satisfied
+# without it — the list was built by starting empty and adding only what the
+# check demanded. Anything a dual-licensed crate merely offers as an
+# alternative (0BSD, BSD-2-Clause, BSL-1.0, Unlicense, LGPL-2.1-or-later) is
+# absent, because MIT or Apache-2.0 already satisfies those crates.
+allow = [
+    "Apache-2.0",         # most of the tree
+    "MIT",                # most of the tree
+    "BSD-3-Clause",       # subtle
+    "CDLA-Permissive-2.0", # webpki-roots, a data licence over the root store
+    "ISC",                # ring, rustls-webpki, untrusted, hmac-sha256
+    "Unicode-3.0",        # unicode-ident, over its Unicode tables
+    "Zlib",               # foldhash
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = false
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

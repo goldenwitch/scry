@@ -1,0 +1,445 @@
+vine 1.2.0
+prefix: lib
+title: scry as a library
+---
+[root] scry as a library (complete)
+The first delivery stage: the core library. The checkpoint is the end of this
+graph, and the next delivery is the MCP server recorded in mcp.vine; a separate
+human-facing command remains unplanned.
+Each node states what it serves, what its absence would cost, and how you would
+know it works. A node that cannot state the first is a candidate for deletion.
+Each node is dispatched to a subagent, whose first job is the nodes it depends
+on: confirm their work is right, and confirm it has everything it needs, before
+starting its own.
+Where these documents do not decide something, the owning node decides it and
+records the choice, so the dependant reviews it instead of discovering it.
+-> checkpoint
+@guidance text/markdown human-authored-specs/vocabulary.md
+@guidance text/markdown human-authored-specs/architecture.md
+@guidance text/markdown human-authored-specs/initial-spec.md
+@guidance text/markdown human-authored-specs/lifecycle.md
+---
+[model] Choose the model (complete)
+Pick the embedding model from the shortlist, on published benchmarks.
+Serves: window, slice and embed all read from it; nothing downstream of
+embedding can be sized until it is named.
+Absent: every token count is a guess and the licence is unknown.
+Known by: name, dimension, limit, licence, and whether a query and a passage
+embed differently — all four recorded here.
+> bge-small-en-v1.5, MIT. 384 dimensions, 512-token limit, 33M parameters, fastembed's default model.
+> Chosen as the easiest to get working: smallest download, fastest on CPU, the library's default path. Benchmarks rank a stand-in, so this is not an optimisation and is not defended as one.
+> Queries take the model's instruction prefix; passages take none. fastembed exposes no query-side entry point, so scry applies the string itself.
+> The prefix is `Represent this sentence for searching relevant passages: `, taken from the model list table on the BAAI model card, not from recall.
+---
+[window] Fix the window (complete)
+Choose the token count slice targets.
+Serves: slice cannot cut without it.
+Absent: chunk size is decided implicitly by whoever writes slice.
+Known by: a number, at or below limit, with its reason written down.
+-> model
+> 256 tokens, half of limit.
+> 512 is the representable space, not the trained one: BGE pools on CLS, so one vector stands for the whole chunk, and a long mixed chunk averages its subjects into none of them. A smaller chunk also makes the span a sharper thing to attribute a claim to.
+> Small chunks normally want overlap to avoid splitting an answer; neighbours already pays that bill, so going small costs nothing we have not already spent.
+> A mechanism, not a measurement. It should lose to a real number as soon as one exists.
+> fastembed configures its tokenizer with truncation at the model's maximum, so measuring a long document with it silently truncates instead of counting. Slice needs its own truncation-disabled configuration or it will not measure what it thinks it measures.
+---
+[crate] Stand the crate up (complete)
+Cargo workspace, edition, lint configuration, and a cargo-deny allow-list.
+Serves: everything below it.
+Absent: nothing can be built or checked.
+Known by: the crate builds with its real dependencies declared, and cargo-deny
+passes over that tree — an allow-list checked against nothing proves nothing.
+> Drop fastembed's hf-hub feature. It brought ten crates — including the tree's only MPL-2.0 entry, four levels down — to download five files and remember where it put them, and it did the downloading with ureq, which scry already depends on.
+> Weigh a crate against its transitive tree, not its API. A dependency's licence is its whole subtree's licence.
+> Measured after the drop: 96 crates left Cargo.lock and none arrived. Ten was the count of hf-hub's own direct subtree; hf-hub-rustls-tls also carried reqwest, hyper, tokio, the icu tables and url. The number is recorded because the decision was made against the smaller one.
+> MPL-2.0 is gone from deny.toml, since option-ext was reached only through dirs under hf-hub. The other seven entries were each re-checked against `cargo deny list` and are still demanded by a crate that offers no alternative: BSD-3-Clause by subtle, CDLA-Permissive-2.0 by webpki-roots, ISC by hmac-sha256 and ring, Unicode-3.0 by unicode-ident, Zlib by foldhash.
+> ort-download-binaries-rustls-tls stays, and it is the one place the hf-hub reasoning was not applied again. ort downloads a native ONNX Runtime at build time, not five files scry could name; replacing it means load-dynamic and making the shipping and locating of that library scry's problem. It costs no crates scry does not already have — its ureq and rustls are the same ones fetch uses.
+> The advisories ignore for RUSTSEC-2024-0436 stands unchanged: paste arrives through tokenizers, not hf-hub, and is still in the tree.
+---
+[types] Write the vocabulary as types (complete)
+The productions in vocabulary.md, in Rust.
+Serves: every part below takes its names from here rather than coining its own.
+Absent: each module invents its own spelling and the vocabulary stops being one.
+Known by: the type names and the productions agree, one for one, and a reader
+can check that by eye.
+-> crate
+> Push what can be made unrepresentable into the types: a span that cannot exceed its text, a window that cannot exceed a limit, an embedding inseparable from its model.
+> One file per production. Caller-facing types are re-exported flat from lib.rs; internal production types remain crate-private, and lib.rs carries the production-to-type table so the one-for-one check is still done by eye.
+> corpus has no type here. It is the state the store owns, and a second shape for it in this node would be the one production with two implementations. The table says so rather than leaving a hole.
+> origin ships as a shape with no constructor, since the origin node owns the only one. A cfg(test) unnormalised constructor exists so document and provenance could be tested before that node lands; it compiles out of every shipped build, and the enum carries an allow(dead_code) that ends when the real constructor arrives.
+> At the types stage, constructors were public and validating rather than crate-private. This was superseded by mend-surface: the constructors of values scry mints are crate-visible, while returned values expose only their read-only accessors. Forgery is not a threat these types defend against: a handle assembled by an agent either agrees with the text at its span, and is therefore right, or is refused when it is verified.
+> Bad input returns Option, not a refusal. The five failures are decisions scry makes about material an agent named; a caller handing a span from another text has made a mistake, which is not one of the five, and panicking is denied.
+> Refusals are grouped by the verbs that reach them - AddRefusal is NotFound or NotText, HandleRefusal is Stale or Gone - so add has no way to return Stale. Incompatible is its own type, since it is an end rather than a refusal.
+> digest is a fixed 32 bytes, so it is a value rather than an allocation. Which 256-bit hash is the handle node's to choose; that it is 256 bits is decided here.
+> vector is f32 and normalises inside its own constructor, so an unnormalised vector does not exist for embed to remember to produce. embedding checks the vector against the model's dimension. score is constructible only by the cosine of two embeddings, and refuses two from different models, so a hit's number cannot be coined.
+> Document::new validates that the spans partition the text - contiguous, non-overlapping, covering, on character boundaries - so slice's acceptance test is a property of the type rather than a test slice must pass. Store re-enters through the same constructor when it reads a document back.
+> expired is implemented once, on provenance. The projections list it over a document, but the prose gives the computation to whoever holds a provenance, and a second copy would be the same comparison written twice.
+> query is its own type over text, so the query path and the passage path cannot be swapped at the embed seam by passing the wrong string.
+> A span is born only from the Text it indexes, and reading text at a span returns Option. Binding a span to its text with a lifetime was rejected: document holds both, and that would make it self-referential.
+---
+[origin] Build origin and its one constructor (complete)
+Parse a path or a url into the normalised key every verb uses.
+Serves: add, delete, store and fetch must all agree on what names a document.
+Absent: delete can miss a document that add stored, silently.
+Known by: a table of inputs that differ only in normalisation, all producing
+one key; and no second place in the tree that constructs an origin.
+-> types
+> Origin::parse(&str) -> Option<Origin> is the one constructor, and the fields and the path/url enum are private, so a second construction site is unwritable rather than forbidden. The cfg(test) unnormalised constructor the types node left behind is gone, and its two call sites now go through parse.
+> A string is a url only if it begins http:// or https://, in any case; everything else is a path. That is exactly what fetch can read over the network, and it keeps a Windows drive letter - which carries no // - from being read as a scheme. A string naming another scheme is therefore a path, and fetch answers NotFound rather than this node inventing a sixth failure.
+> None is returned for input that names no document: empty, a url with no host, a url carrying credentials, or a relative path when the current directory cannot be read. This follows the types node's rule that bad input is an Option rather than one of the five refusals - the five are decisions about material an agent named, and an unparseable string never named any.
+> Credentials in a url are refused rather than stripped. Stripping would send fetch somewhere the agent did not name; keeping them would write a secret into the store and hand it back through provenance. A credential is not part of a document's identity, so two urls differing only there are not two documents - they are one mistake.
+> Url normalisation is syntax-based and nothing more: scheme and host lowercased, a default or empty port dropped, an empty path written as /, the fragment dropped, an empty query dropped. Percent-encoding is left byte for byte, since a server is free to read %2F and / as different things, so re-encoding what the caller wrote could change which bytes come back. The query is kept for the same reason.
+> The fragment is dropped because it names a place inside a document and is never sent to the server, so two urls differing only there are one document.
+> A path is made absolute against the current directory and rebuilt from its components. Absolute is what makes the key mean the same thing in the next process and from another working directory, which is the failure this node exists to prevent; rebuilding from components drops ., collapses repeated separators, drops a trailing one, and writes one separator throughout. Both steps are fixpoints, so normalisation is idempotent.
+> The filesystem is never consulted - no canonicalize. An origin must normalise before fetch can report there is nothing at it, so a key that only exists for files that exist is not a key. Symlinks are not resolved for the same reason a .. is not collapsed by hand: normalising a name must not change which file the name reaches.
+> Consequence, recorded rather than hidden: std::path::absolute resolves .. on Windows and leaves it on Unix, so a/b/../c and a/c are one key on Windows and two on Unix. Collapsing .. ourselves would make the two agree by changing which file a symlinked path reaches, which is worse than the disagreement. The test that claims the Windows behaviour is cfg(windows).
+> A path that is not UTF-8 is refused. An origin is kept as its spelling, and Display must parse back to the same origin for the store's round-trip to hold, which a lossy spelling breaks. Since the input is a &str, this can only be reached through a non-UTF-8 current directory.
+> No new dependency. Url normalisation is a hundred lines of split_once against the three names architecture.md allows, and reaching for a url crate to get percent-encoding normalisation we have decided not to do would buy nothing.
+---
+[fetch] Read an origin into text (complete)
+Read a path or url, returning text and the moment it was read.
+Serves: add has nothing to store without it.
+Absent: no corpus.
+Known by: a text file round-trips; bytes that are not text are refused rather
+than replaced with substitution characters; fetched_at comes from here and
+nowhere else.
+-> origin
+> ureq for urls, the standard library for paths. Synchronous, matching redb and fastembed, so no async runtime enters for the sake of one call.
+> scry fetches so the agent does not: the network's failures become NotFound rather than something an agent has to interpret.
+> The signature is fetch(&Origin) -> Result<(Text, SystemTime), AddRefusal>, and there is no third answer. The embed, slice and store nodes made weather an io::Error; here weather is what this node was told to absorb, so a refused connection, a 404, a redirect that never lands and an absent file are one word - NotFound - and no io::Error leaves. The failure type being exactly AddRefusal is also add's whole error type, so add propagates rather than translates.
+> The pair is a tuple, not a new struct. vocabulary.md is every word scry uses and nothing else, and text-with-its-moment is named nowhere in it; a Fetched type would be the one production that exists only in the code.
+> The line between the two refusals is whether bytes arrived. Nothing arriving is NotFound; something arriving that scry will not index is NotText. That is what puts the size cap on the NotText side - the bytes are there, they are just not something scry will index, which is what the word says.
+> A free function, not a seam struct like Embed or Slice. Those hold a model and a tokenizer; fetch holds nothing, and a struct would exist only to be constructed. No ureq Agent is kept either, so there is no connection pool - add reads one document, so pooling would serve nothing.
+> One cap of 64 MiB over both readers, checked in one place. A read has to be bounded or a url ends the process instead of answering, and it has to be the same bound for both or one document answers differently from a path than from a url - which is a live case, since vocabulary.md says a converted document is added by path. The number is a bound on damage rather than a policy about size: a long book is about a megabyte, and 64 MiB of text carries half as much again in embeddings.
+> The bound is applied as Read::take on both sides, so each reader stops one byte past the cap and the caller makes the single decision. ureq's own limit() refuses the read instead of stopping it, which would have made an oversize url NotFound while an oversize path was NotText - the asymmetry the shared cap exists to remove.
+> A global timeout of five minutes on urls. add has to return, and a server that accepts a connection and then says nothing is otherwise a hang the agent holds - the thing this part exists to prevent. Against the cap that is 1.8 Mbit/s for the largest thing scry will read and thousandths of it for a real document. Both bounds are arguments to a private read(), so the tests state ones small enough to reach rather than asserting the constants by eye.
+> fetched_at is taken before the read, not after. The bytes are at least as new as that moment, so the record never claims the material is newer than it is, and ttl expiry errs early.
+> The response's headers are not read at all. A charset is a conversion scry does not do, so bytes that are not UTF-8 are refused whatever the server calls them; a content type is the server's opinion of bytes scry has its own test for. Measured rather than assumed: ureq 3.3.0's default features are rustls and gzip, so its charset decoder is compiled out and no transcoding happens behind us. gzip stays, since a content encoding is how the bytes travelled rather than what they are.
+> Redirects are followed - ureq's default of ten, erroring beyond - and the origin stays the url the agent named rather than the one that answered. The key is what was asked for; where the server sent us is not a second document.
+> Reviewed the origin node before starting, as the root asks. as_url and as_path give exactly the fork this part needs, credentials are refused before fetch could send them, and http/https being the only urls means every other scheme arrives here as a path and leaves as NotFound - the fifth refusal the origin node declined to coin, absorbed here as promised.
+> Measured: 71 tests pass, 12 of them fetch's, and the fetch dozen run in 0.11s and touch no network. The url path is measured against a loopback server the test spawns - a real socket, real HTTP, no mock - covering a round trip, a 404, bytes that are not text, the cap, and a server that accepts and then says nothing. cargo clippy passes the workspace's pedantic set and cargo deny is clean; Cargo.lock did not move, since ureq was already declared.
+---
+[embed] Bind the model and produce embeddings (complete)
+fastembed behind the embed seam, returning an embedding, never a bare vector.
+Serves: search has nothing to compare without it.
+Absent: no ranking.
+Known by: vectors come back normalised, so a self-similarity is 1; the model
+travels inside the embedding; a query and a passage take the paths the model
+requires.
+-> model
+-> types
+> Fetch the model's ONNX and tokenizer files with ureq at a pinned revision, and build the model with try_new_from_user_defined. Pinning is what makes a model's name mean the same bytes twice, which is the whole point of freezing an embedding to its model.
+> The pin is Xenova/bge-small-en-v1.5 at ea104dacec62c0de699686887e3f920caeb4f3e3 - the ONNX export fastembed pulls for its own default, since bge-small-en-v1.5 ships as PyTorch weights and the bytes scry runs are the export's.
+> The revision is part of the model's name, which is now Xenova/bge-small-en-v1.5@ea104dac...f3e3. A name that meant the same bytes twice would be a lie the moment the pin moved, and the store compares names to decide Incompatible - so re-pinning is recognised rather than scored across two spaces.
+> The cache directory is an argument to load, not a default. embed cannot know the caller's disk, and a default relative to the working directory would name a different place from a different directory. The store node already takes a path and is where this belongs; this is the choice most in need of its review.
+> Each pinned file carries its byte count at that revision. The count bounds the read, so a server answering with something other than the pinned bytes cannot answer with an unbounded amount of them, and it is then checked exactly. Sizes: 133093490 for onnx/model.onnx, 711396, 683, 366 and 125 for the four tokenizer files.
+> No digest verification beyond that. The only published hash for these files comes from the same server as the bytes, so checking it would prove transport integrity that TLS already provides, and nothing about the bytes being the ones we pinned.
+> Files are cached under their revision and renamed into place from a uniquely named partial, so a download that stops halfway is never read back as a model and two pins can sit side by side.
+> Loading and inference fail with std::io::Error. The five refusals are decisions scry makes about material an agent named; the network, the disk and the ONNX Runtime are weather, and io::Error is the standard library's word for weather - so no sixth failure is coined and no fastembed type leaks out.
+> Pooling::Cls is set explicitly. A user-defined model has no pooling unless it is given one, and fastembed's own table gives Cls to every BGE - which is also what the window node's reasoning about CLS pooling assumed.
+> The tokenizer.json bytes are exposed for slice. This answers the question slice's node left open: fastembed's tokenizer field is public, but it is the one configured to truncate at 512, so it reports a long text as 512 tokens rather than counting it. Slice takes the bytes and configures its own rather than fetching them a second time.
+> passages embeds a batch in one call, since add embeds a whole document's chunks at once; passage and query are the one-text paths over it. A query is a Query and a passage is a str, so the two paths cannot be swapped at the seam.
+> Measured: 39 tests pass. Cold, the suite fetches 133 MB and runs in 13s; from the cache it runs in 1.5s and touches no network. The query path was checked against the passage path over the prefixed string, so the prefix is proven applied rather than assumed.
+---
+[slice] Cut text into a covering partition (complete)
+Count tokens with the model's tokenizer, cut at text offsets.
+Serves: chunks are the unit of every answer scry gives.
+Absent: nothing to embed.
+Known by: the spans of a document are contiguous, non-overlapping and covering,
+so every offset falls in exactly one; and no produced chunk exceeds limit.
+-> embed
+-> window
+> Derive spans from cut points, not from token offsets. A word-piece tokenizer's offsets skip inter-token whitespace and normalised-away characters, so spans built from them are not covering, and covering is an acceptance test here.
+> Cut every window of tokens and by no other rule. There is no sentence or paragraph preference to implement; the window decision was the boundary decision.
+> The open question is answered and it was the embed node that answered it: fastembed's tokenizer field is public but configured to truncate at 512, so slice takes the pinned tokenizer.json bytes embed already exposes and builds its own with truncation and padding both switched off. Padding too, since a padded encoding counts pad tokens and this seam exists to count.
+> tokenizers is declared as a direct dependency rather than reached through fastembed, at fastembed's own version and its one feature. Measured: Cargo.lock gained one line - slice's name in scry's dependency list - and no crate. Naming the crate you use costs nothing here, and the crate node's rule was to weigh a dependency by its tree, which in this case is empty.
+> Slice::new takes the Embed seam, not a model and a window. The tokenizer bytes and the limit the window is measured against then come from the one place that knows which model this is, so a slicer cut for one model and a model that embeds it cannot disagree. The shape architecture.md gives - model window text -> span* - is preserved with the first two folded into the constructor.
+> The 256 lives here, as a constant checked against the model's limit through Window::new. The window node fixed the number and left no value behind, because Window is a type over any number; slice is the only part that targets one, so this is where it is spelled.
+> A window is a chunk's whole token count, including the two the tokenizer adds. So the text budget is the window less those, and the number is measured rather than assumed: encoding the empty string with special tokens gives 2, so the budget is 254. Reading the window as 256 tokens of text on top of whatever the tokenizer adds was the alternative, and vocabulary.md says tokens are counted as the model counts them, including whatever the tokenizer adds.
+> Cut points come from one encoding of the whole text, and a chunk re-tokenized on its own can drift where a word was split across a cut. Slice does not iterate to remove that drift: a fixup pass would be a second cutting rule, and the window is half the limit, so the slack absorbs it. Measured on the test text: the largest chunk re-counted alone comes back at 256 exactly, against a limit of 512, and the test asserts that number rather than an inequality.
+> Earlier decision, superseded by mend-slice: a cut candidate that did not advance past the last one, or did not land on a character boundary, was passed over rather than adjusted. Passing over merged two chunks, which the slack above absorbed; adjusting would have moved a boundary the tokenizer chose, and cutting mid-character produced no span at all.
+> An empty text is cut into nothing, which is the partition of no bytes and is what Document::new already accepts.
+> Failures are io::Error, as embed ruled: the tokenizer refusing its own bytes is weather, not one of the five refusals.
+> Measured: 46 tests pass, 7 of them slice's, in 3.5s from the warm model cache. cargo deny is clean and cargo clippy passes the workspace's pedantic set.
+---
+[handle] Mint and verify handles (complete)
+Hash a chunk's text; compare on the way back in.
+Serves: the whole provenance claim rests on it.
+Absent: scry can answer confidently about text that has since changed.
+Known by: a handle verifies against unchanged text, fails against edited text,
+and fails against a span that no longer fits the document.
+-> types
+> SHA-256, from hmac-sha256. The types node fixed the width at 256 bits and left the choice here. Measured against the crate node's rule of weighing a dependency by its tree: hmac-sha256 has no dependencies of its own, is already in the tree under ort-sys, and its ISC is a licence deny.toml already allows and already names it in. Cargo.lock gained one line - scry's dependency list - and no crate. sha2 would have brought digest, block-buffer, crypto-common, generic-array and cpufeatures for the same 32 bytes.
+> Which hash is measured rather than written down: a test asserts the published SHA-256 vector for `abc` through mint. That test also proves the digest is over the chunk's text and nothing else, since a digest that folded in the origin or the span would not match it - which is what vocabulary.md says a digest is.
+> The seam is two functions on Handle, not a struct. It holds nothing - no model, no tokenizer, no file - so a struct would exist only to be constructed, which is the reading the fetch node gave. Minting and verifying are two uses of one private hash, so putting them beside it in handle.rs is what makes it the only place text is hashed.
+> mint takes a document and a span, not a chunk and a text. A caller cannot then hand it text from one document and a span from another, and the origin in the minted chunk comes from the document rather than from the caller - so a handle naming a document it was not cut from is unwritable rather than refused later.
+> mint refuses a span the document was not cut into. A chunk is a span of the partition, so a handle over a place nobody cut is not minted at all; the two callers architecture.md names - search over a document's spans, neighbours over adjacent ones - only ever ask for spans that are in it.
+> mint returns the passage, not the handle. Both flows that mint want text with its handle - search to wrap in a hit, neighbours to return - and the text is in hand at the moment the hash is taken, so pairing it here means no caller reads the span a second time to pair it. A bare handle is passage.handle().
+> verify returns Option<&str>, not Result<(), HandleRefusal>. HandleRefusal is Stale or Gone, and this seam holds no corpus, so it can never reach Gone - returning it would seat a failure this part cannot produce next to one it can, against the refusal node's rule that a verb has no way to return a refusal it cannot reach. The verb that looked the document up turns absent into Gone and None into Stale. The text comes back rather than a bool because provenance wants neither and neighbours wants the text.
+> verify does not consult the document's current cut. Stale says the text is no longer there, and re-slicing a document does not move its bytes - so a handle into a document cut differently but written the same still verifies. mint checking partition membership and verify not checking it is the asymmetry that reading forces: minting is where scry chooses what to hand out, verifying is where it judges a claim about text.
+> verify checks the handle's origin against the document's. Both verbs look the document up by the handle's own origin, so this can only fail for a caller that did not - and a check that costs a comparison is cheaper than the sentence in the prose it replaces.
+> Digests are compared with plain equality, not in constant time. The types node ruled forgery is not a threat these types defend against - a handle either agrees with the text at its span or is refused - so there is no secret here whose comparison could leak.
+> Reviewed the types node before starting, as the root asks. Handle, Chunk, Digest, Passage and Document::spans were everything this needed and nothing was missing; Text::at returning Option is what makes a span that no longer fits the document one of the two ways verify fails, rather than something this node had to check for itself.
+> Measured: 79 tests pass, 8 of them handle's, and the handle eight run in 0.00s and touch no disk or network. cargo clippy passes the workspace's pedantic set over all targets and cargo deny is clean - advisories, bans, licences and sources - with deny.toml unchanged, since ISC was already allowed and already named hmac-sha256.
+---
+[store] Put the corpus in redb (complete)
+Open by path, replace by origin, remove by origin, read one document, iterate all.
+Serves: the only state scry has.
+Absent: nothing survives a process.
+Known by: open creates an absent store and opens a present one; replace overwrites
+in place; remove of an absent origin is a no-op; a corpus written by one process
+is read by the next; a store written by another model or another layout is
+Incompatible and opens for nobody.
+-> origin
+-> types
+> Incompatible is fatal, not a refusal. A store from another model or another layout does not open, no verb runs, and nothing an agent does repairs it — which is why it is worth naming rather than leaving as weather.
+> open returns io::Result<Result<Store, Incompatible>>, nested rather than one enum of the two. The vocabulary gives open exactly one failure and says weather is not a word here; an enum would seat the disk beside Incompatible as a named alternative, which is the thing the vocabulary declined to do. The nesting coins no word and leaves no way to read a disk that will not read as an end.
+> The store is handed a Model and stamps it beside a layout number, and open compares the stamped bytes against the ones this build would write. One byte comparison answers both another model and another layout, so there is no second check to forget. The model arrives as an argument because this node depends on origin and types and not on embed — the store recognises a model, it does not load one.
+> Earlier decision, superseded by mend-rot: the model cache belonged beside the store file, which was the question the embed node left for review. Store::cache(path) appended .models to the store's own path. Appending to the whole path rather than replacing an extension was total - it needed no stem and could not collide with the store file. It was an associated function, not a method, because the model had to be loaded before the store could be opened, so the ordering the answer needed was forced by the types rather than remembered.
+> A file at that path that is not a redb database, or is one this build cannot read, is Incompatible — redb answers those with Io(InvalidData) and UpgradeRequired. Corruption is not folded in: corrupt is not another model or another layout, and the one terminal word means less for every thing it is made to cover.
+> A redb database holding no tables is stamped as ours; one holding tables that are not ours is Incompatible. That is what makes absent-means-create survive a crash between creating the file and stamping it — the file left behind is indistinguishable from one just created, so it is created rather than condemned.
+> One record per origin, keyed by the origin's spelling, holding text, fetched_at, ttl, the spans and the embeddings together. Together because there is one embedding per span and replace has to land in one put; keyed by the spelling because origin already proves a spelling parses back to the origin it came from, so writing the origin into the record too would be one fact in two places.
+> The record is hand-encoded, no serde. What we use is fixed-width little-endian lengths and floats against types we own, and the crate node's rule is to weigh a dependency by the tree it drags in. Measured: Cargo.lock did not move, and no crate arrived — redb was already declared.
+> The disk is read back through the constructors rather than around them: Document::new re-checks the partition, Text::span re-checks the offsets, Vector::normalise re-checks the floats, and a trailing byte is an error. A store that hands back something else fails as InvalidData rather than becoming a plausible corpus. Counts read off a record never size an allocation, so a forged length asks for nothing.
+> Embeddings that are not one per span, or that name another model, are refused as InvalidInput rather than as one of the five. A caller handing the store a corpus it did not open for has made a mistake, not asked a question — the same reading the types node gave a span from another text. This is rung 2 and no higher: making it unrepresentable would mean the store loading the model, which is the dependency this node does not have.
+> scan takes a closure rather than returning an iterator, so the transaction stays inside the store and the corpus is never materialised for a caller. Iterating is what search needs; enumerating is what architecture.md says no verb does.
+> Measured: 59 tests pass, 13 of them the store's, in 4.1s. cargo clippy passes the workspace's pedantic set and cargo deny is clean. The persistence test closes the file and opens it again rather than spawning a process — that is the proxy that was run, and it is named rather than claimed as the thing itself.
+---
+[add] Wire add (complete)
+fetch, slice, embed, replace.
+Serves: job 2.
+Absent: no way to fill the corpus.
+Known by: adding the same origin twice leaves one document; the second add
+replaces rather than accumulates.
+-> embed
+-> fetch
+-> slice
+-> store
+> add is an inherent method on Store, in its own file, taking the seams it needs as arguments. vocabulary.md says every verb but open is called on $corpus and Store is $corpus, so the verbs land there rather than as free functions - fetch is a free function because it is a part, not a verb. The seams arrive as arguments so store.rs still names neither embed nor slice: the store node's ruling that a store recognises a model rather than loading one survives, and add is the one place that holds all four.
+> The signature is io::Result<Result<(), AddRefusal>>, which is open's nesting rather than a new shape. The vocabulary gives add exactly two failures and says weather is not a word here, so the disk, the tokenizer and the inference session cannot be seated beside NotFound as a third named alternative. The fetch node promised AddRefusal would be add's whole error type and it is - the inner Result is exactly what fetch returned, propagated and not translated.
+> Nothing is written until the document and all of its embeddings are in hand, and then in one put. So an add that fails partway leaves the document that was there untouched, and add is never a remove followed by an insert - the store node's replace-in-one-put is what makes that free. The test that provokes it deletes the file under an already-added origin and checks the old document is still held after the refusal.
+> A file with nothing in it is added as a document with no spans and no embeddings. The bytes arrived and they are text, so neither refusal is true of it; slice already cuts an empty text into the partition of no bytes and Document::new already accepts that. Refusing it would be a sixth failure invented at the last seam that could have.
+> A document's chunks are embedded in one call to Embed::passages, which is the batch path the embed node built for exactly this caller. The single-chunk case is the same code, so the test that checks an embedding per span uses a text long enough to be cut into more than one - otherwise the batch path would be measured wearing the single case's clothes.
+> Document::new is where a slicer that did not partition the text is caught, and it answers with io::Error rather than a refusal: a partition that is not one is a defect in slice, not a decision about material an agent named. Same for a span of the document that does not read, which the constructor has already made impossible - the alternative to saying so is a panic, which is denied crate-wide.
+> Reviewed the four nodes this depends on before starting, as the root asks. fetch hands back exactly (Text, SystemTime) with AddRefusal and no io::Error; slice takes the Embed seam so the tokenizer and the model cannot disagree; embed's passages is the batch; store.replace re-checks one embedding per span and the model's name. Nothing was missing and nothing was reached past - the only thing added here is the order.
+> Measured: 89 tests pass, 6 of them add's, and the add six run in 3.2s from the warm model cache and touch no network. cargo clippy passes the workspace's pedantic set over all targets and cargo deny is clean; Cargo.lock did not move and no dependency arrived.
+---
+[delete] Wire delete (complete)
+Remove by origin.
+Serves: job 2.
+Absent: a corpus that only grows.
+Known by: deleting twice is not an error; a handle into a deleted document
+reports Gone rather than Stale.
+-> store
+> delete is an inherent method on Store in its own file, as add is, and its whole body is store.remove. The verbs are the words scry speaks; replace and remove are the store part's operations, and architecture.md draws that line itself - its flow reads delete(origin) store.remove. A file whose body is one line is the cost of keeping the two vocabularies from being merged, and it is the smaller cost.
+> Store::remove is now pub(crate). It was the one store operation a verb duplicates exactly - same argument, same answer, same meaning - and two public names for one thing would require prose telling a caller which to reach for. Rung 1: the second name is unwritable rather than discouraged. At this stage, replace, document and scan stayed public while search, neighbours and provenance were still to be wired; mend-surface later narrowed those implementation operations as well.
+> The answer is io::Result<()>, not the nested shape open and add use. Those nest because the vocabulary gives them a refusal that the disk must not be seated beside; delete is given no failure at all, so there is no inner Result to nest and coining one would be a sixth failure invented at the one verb that decides nothing.
+> delete does not report whether anything was there. A boolean would make deleting twice distinguishable from deleting once, which is exactly what the criterion says it is not, and it would be the one place scry told an agent what the corpus holds - no verb enumerates.
+> The Gone criterion is measured as far as this node can reach, and the proxy is named rather than claimed as the thing. Gone is a word only provenance and neighbours say and neither is built, so what is measured is what decides between the two: after a delete the store answers absent for the handle's own origin, and that same handle still verifies against the document it was minted from - so nothing here became Stale. A delete that edited the record instead of removing it would leave the second half true and the first false, which is the failure the test would catch.
+> The tests hold no model and touch no network. A delete test needs a document in the store and store.replace puts one there, so the material is a hand-built document like the store's own tests rather than one add fetched, embedded and cut - reaching for add would have measured four other parts to observe a removal.
+> Reviewed the store node before starting, as the root asks. remove was already exactly this verb - one commit, keyed by the spelling origin normalises, a no-op on an origin holding nothing - and document() answering None is what the verbs downstream turn into Gone. Nothing was missing and nothing was reached past; what this node adds is the name, the demotion, and the tests that state the criterion in the verb's own terms.
+> Measured: 94 tests pass, 5 of them delete's, and the delete five run in 0.07s and touch no disk beyond a temporary store, no network and no model. cargo clippy passes the workspace's pedantic set over all targets and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived.
+---
+[fixture] Author a known-answer fixture (complete)
+A small corpus whose expected nearest passages are known by hand.
+Serves: search is an instrument, and an instrument that has never been checked
+against a known answer reports confident structure from nothing.
+Absent: search is asserted rather than measured, and a ranking bug looks like a
+model being mediocre.
+Known by: the fixture's answers were derived without running scry.
+-> types
+> Built before search, so search is measured on arrival rather than trusted and checked later.
+> Known blind spot: nearest-neighbour under bge-small is hand-derivable only for grossly separated topics, so this fixture validates coarse topical separation and nothing finer. A ranking bug that preserves topic clusters passes it.
+> Reviewed the types node before starting, as the root asks. Origin, Text and Query were everything this needed: the corpus is spellings and text, the answers are origins, and a query being its own type is what keeps a fixture row from being read as a passage. Nothing was missing and nothing else was reached for - the node's one dependency is still its only one.
+> Six documents on six grossly separated subjects, one query each, and the map between them is a bijection. Every document answers exactly one query, so no document sits in the corpus unmeasured and no query is a row nobody could be wrong about. The one-to-one is asserted rather than left to the eye.
+> Nothing here was measured with scry, and the model was deliberately not run against it. An expectation recorded from a search agrees with that search by construction and can only confirm the ranker to itself, which is the failure this part exists to prevent. The price is stated in the file: a row can be wrong, and if search disagrees with one, the row is the first thing to doubt and a human settles it rather than the fixture being edited to match.
+> The derivation is written down as a table - query, nearest, the deciding words, and the only other document with any claim - so a reader disagrees with an argument rather than with an assertion. That table is the artifact; the Rust around it is how a test reaches it.
+> Each expectation names an origin, and the claim is strict: that document is nearer than any other. Search may then ask for one hit and check identity or ask for several and check membership, which is the weaker reading its own node named. A rank is not recorded, since an order nobody derived by hand would be a recorded output.
+> Every document is under 254 characters, which is what makes a document and a passage the same thing here. A word-piece token consumes at least one character, so the character count bounds the token count against slice's text budget of 254 - a window of 256 less the two the tokenizer adds - and no document can reach a cut. This is checked with no model and no network, and the bound is written as one the fixture holds itself to rather than a copy of the window: it stays true while the budget only grows, and a budget that shrank below it is what the comment there says to come back for.
+> One word, queen, is planted in two documents - the hive and the chess opening - so a ranker that had quietly fallen back to matching words is caught rather than passed. That row is derived like every other: the query asks about a colony and a winter, and one document is about those.
+> The fixture is data and a derivation, not a loader. It builds no Document, because a document is cut into spans and cutting is slice's; the consumer slices and embeds this text into a store, which is the corpus add would have left. Building it here would be the one production with two implementations, and would have made this node depend on the two seams it does not.
+> Origins are urls under the reserved .invalid domain. Nothing can fetch one by accident, and the text is in the file rather than in a file beside it, so what a row claims and what a store is given cannot drift apart. A search test writes them through store.replace and never reaches the network.
+> cfg(test) and pub(crate) throughout, so the fixture ships in no build and is exported nowhere. It is the instrument's known answer, not a part of scry, and the lib.rs table of productions is left alone because a fixture is not one.
+> Measured: 83 tests pass, 4 of them the fixture's, and the fixture four run in 0.00s and touch no disk, no network and no model. cargo clippy passes the workspace's pedantic set over all targets and cargo deny is clean; Cargo.lock did not move and no dependency arrived.
+---
+[search] Wire search (complete)
+Embed the query, scan the corpus, return hits.
+Serves: job 1.
+Absent: no retrieval.
+Known by: the fixture's expected passages are among those returned, and every
+returned handle verifies immediately after being returned. Membership, not
+ordering — an order nobody can derive by hand is a recorded output, not a known
+answer.
+-> embed
+-> fixture
+-> handle
+-> store
+> search is an inherent method on Store in its own file, as add and delete are, and the embed seam arrives as an argument. Store is $corpus and every verb but open is called on it; the store recognises a model rather than loading one, so the one part search needs that the store does not hold is passed in.
+> The answer is io::Result<Vec<Hit>>, not the nested shape open and add use. Those nest because the vocabulary gives them a refusal the disk must not be seated beside; search is given no failure at all, so there is no inner Result and coining one would be a sixth failure. Fewer hits than were asked for, and none at all, are answers about the corpus rather than decisions about material an agent named.
+> Hits come back best first. Selecting the best count already ordered them, so handing back a permutation would be withholding a fact scry computed; but what the test judges is membership, because the order within those hits is not something anyone derived by hand. The order is measured as a property of the output - the scores are non-increasing - which claims nothing about which document ranks where.
+> The top count is kept by bounded insertion, and a chunk is minted only once it has beaten the worst hit held. Minting hashes the chunk's text and copies it, so minting first and discarding after would hash and copy the whole corpus to answer with three of it. The comparison is the cheap half and it is the half that runs on every chunk.
+> Ordering is by f32::total_cmp on the score, not partial_cmp. total_cmp is total and cannot panic, so the sort needs no claim that a cosine is never NaN and no unwrap to state one - which is what the crate-wide denial of panic asks for.
+> Score::cosine answering None is turned into io::Error InvalidInput at the one place the comparison already happens, rather than by a second check before the scan. Everything the store hands back names the model the store was opened with, so the only way to reach it is a caller who handed search an Embed the store was not opened with - a mistake rather than a decision, which is the reading the store node gave the same shape.
+> The count never sizes an allocation. Count is any non-zero number a caller named, so the answer grows to what the corpus held rather than to what was asked for - the same reading the store node gave a length read off a record.
+> Store::scan's closure now answers io::Result<()> and the walk stops where it fails. This is the change review found: the store node built scan for search and search is the first caller that can tell something is wrong at one document, which under the old signature it could only carry out in a captured variable while the rest of the corpus was decoded past it. The three existing callers gained an Ok(()) and nothing else.
+> Reviewed the four nodes this depends on before starting, as the root asks. embed.query applies the prefix and hands back an Embedding; store.scan walks the corpus inside its own transaction; handle.mint returns the passage rather than the handle, which is exactly what a hit wraps, and refuses a span the document was not cut into; the fixture is data and a derivation, and its origins are .invalid urls so the corpus is written through replace and nothing reaches the network. Nothing was missing; the one thing reached past was scan's closure, and it was changed rather than worked around.
+> A query embedded by another model is not measured. It takes a second model, and this build pins one - so what is measured is the path scry can produce, and the mistake is stated in the type rather than in a test.
+> Measured: 99 tests pass, 5 of them search's, and the search five run in 3.1s from the warm model cache and touch no network. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived.
+> Measured beyond the criterion, and recorded as data rather than adopted as the test: with a count of one, all six fixture queries return the document the fixture derived as nearest. The judged criterion stays membership in three, which is what this node was given.
+---
+[neighbours] Wire neighbours (complete)
+Verify the handle, then return the passages around it.
+Serves: surrounding context, which is why the spans live on the document.
+Absent: an agent gets a fragment with no way to widen it.
+Known by: expanding from a handle whose text has changed refuses rather than
+returning a window around a moved span.
+-> handle
+-> store
+> neighbours is an inherent method on Store in its own file, as add, delete and search are, and it is the one verb that takes no seam. It needs no model - the passages it hands back are minted from text the store already holds - so nothing arrives as an argument but the handle and the count. Store is $corpus and every verb but open is called on it.
+> The answer is io::Result<Result<Vec<Passage>, HandleRefusal>>, which is open's and add's nesting rather than a new shape. The vocabulary gives neighbours exactly two failures and says weather is not a word here, so the disk cannot be seated beside Stale as a third named alternative.
+> count is how many passages come back, not how many on each side. It is the same word search takes, and giving count a different meaning here would make the interface ambiguous. Rung 1: the per-side reading is unwritable, since the number in the type is the length of the answer.
+> The chunk the handle names is not among its neighbours. The projection says neighbours are the chunks adjacent to chunk.span, and an agent asking to widen a fragment is already holding it - returning it would spend one of the count on text the caller has. Widening further is asking again from a passage that came back, which is why every one of them carries a handle.
+> The count is taken outward from the chunk, a step behind for every step ahead, and the odd one behind. So the answer is always a contiguous run of the document with the chunk's own text in the middle of it, and it comes back in reading order. Behind wins the tie because text is read forwards: what a fragment continues from is the half that makes it readable, and the tie has to be broken by a rule rather than by whichever loop was written first.
+> Adjacency is read off the offsets rather than off membership of the current cut. The handle node ruled that verify does not consult the cut, so a document written again with the same bytes and cut differently still verifies - and this verb then has to answer for it. Two partition_points over the spans give the run wholly before the span and the run wholly after it; a chunk of the current cut that overlaps the handle's span without being it is neither, so it is passed over rather than handed back as surrounding context it is not. In the ordinary case where the span is in the cut, those two are exactly the chunk before and the chunk after.
+> The store is looked up before the handle is verified, and that order is what tells the two refusals apart. An absent document is Gone; a document that is there whose text at the span disagrees is Stale. The handle seam holds no corpus and said so, so naming the absent case is this file's job and not a sixth failure.
+> Fewer passages than were asked for, and none at all, are answers about the document rather than refusals - a document holding one chunk has nothing around it. The same reading search gave a corpus with fewer chunks than the count.
+> Reviewed the two nodes this depends on before starting, as the root asks. handle.verify returns the text and never HandleRefusal, which is exactly the None this file turns into Stale; handle.mint returns the passage rather than the handle, which is what this verb hands back, and refuses a span the document was not cut into, which is why the spans here come from the document's own cut. store.document answering None is what becomes Gone, and Document::spans is sorted, non-overlapping and covering, which is what makes adjacency two partition_points rather than a search. Nothing was missing and nothing was reached past - no store operation changed, and no other file was edited but lib.rs, to name the module.
+> Measured: 108 tests pass, 9 of them neighbours', and the neighbours nine run in 0.16s and touch no network and no model - the documents are hand-built and written through replace, as delete's tests are. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived.
+---
+[provenance] Wire provenance (complete)
+Verify, then answer with origin, span, fetched_at and ttl.
+Serves: job 3, and the reason the project exists.
+Absent: answers with no path back to their bytes.
+Known by: provenance for a fresh handle is exact; for edited text it is Stale;
+for a deleted document it is Gone.
+-> handle
+-> store
+> The verb lands in provenance.rs beside its own type, and it is the one verb that does not get a file of its own. add, delete, search and neighbours each name something no noun does; here the vocabulary gives one word to the noun and to the verb that yields it, so a second file would have to be called something the vocabulary does not say - inventing a word to hold a word. The module doc says which half is which.
+> The answer is io::Result<Result<Provenance, HandleRefusal>>, which is open's, add's and neighbours' nesting rather than a new shape. The vocabulary gives provenance exactly two failures and says weather is not a word here, so the disk cannot be seated beside Stale as a third named alternative.
+> The chunk that comes back is the handle's own, not one re-derived from the document's current cut. Verifying is what makes it exact - the text at that span now is the text the handle was cut from, so the origin and the span still name where those bytes are. Re-deriving would be reading the cut, which handle.verify ruled it does not, and a document written again with the same bytes and cut differently would then answer with a chunk the agent never held.
+> The store is looked up before the handle is verified, and that order is what tells the two refusals apart - the same order neighbours runs in, and for the same reason: the seam that verifies holds no corpus, so an absent document is this file's to name. A handle into a document never added is Gone as well as one into a deleted document; the store answers absent either way, and asking how it came to be absent would be a sixth failure at the verb that decides the least.
+> expired is not computed here and no clock is read. The vocabulary says whoever holds a provenance computes it, from the fetched_at and ttl in it, and the types node put the one implementation on Provenance - so this verb hands back the two facts and judges neither. A verb that returned the answer instead would be the projection with two implementations, and would make an answer age in flight.
+> Reviewed the two nodes this depends on before starting, as the root asks. handle.verify returns the text and never HandleRefusal, which is exactly the None this file turns into Stale, and it checks the handle's origin against the document's - so the lookup and the check agree on which document is meant. store.document answering None is what becomes Gone; Document::fetched_at and Document::ttl are the two facts the record round-trips. Nothing was missing and nothing was reached past - no other file was edited, since lib.rs already named the module for the type.
+> Measured: 113 tests pass, 7 of them provenance.rs's - five the verb's and two the type's, which were already here - and the seven run in 0.08s and touch no network and no model. The documents are hand-built and written through replace, as delete's and neighbours' tests are. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived.
+> Measured rather than asserted by eye: the exactness test names the middle chunk's offsets, 2 and 4 of a three-chunk document, so a verb that answered with the document's own span or with a neighbour's would fail it rather than pass on a chunk that happened to be the whole text.
+---
+[tests] Close the suite (complete)
+The suite over every verb.
+Serves: the checkpoint is "working and well-tested", and this is the second half
+of that.
+Absent: no basis for the checkpoint decision.
+Known by: the suite passes from a clean checkout; NotFound, NotText, Stale, and
+Gone are each provoked through a caller-visible path; and Incompatible prevents
+a verb from running.
+-> add
+-> delete
+-> neighbours
+-> provenance
+-> search
+> The first run fetches the model weights and the ONNX Runtime binary; later runs need no network. The suite is not hermetic from a clean checkout and does not claim to be.
+> The suite is an integration test - crates/scry/tests/suite.rs - so it sees the crate the way a dependency sees it. Every part is already tested beside itself against material built by hand: a document reaches the store through replace, a handle is minted over text no add ever read, and nothing in the crate is a caller. What this file adds is the composition, not more coverage of the parts, and it is the only thing that would have found a verb needing something the crate does not export.
+> Reviewed the five nodes this depends on before starting, as the root asks. The dependency-facing surface is Store::open and the five verbs; Embed::load and model; Slice::new; Origin::parse; Query::new; Count::new; Text; and read-only accessors on returned values. Nothing was missing, and the suite compiles using that surface rather than store internals.
+> Store::replace, Store::remove, Store::document and Store::scan are crate-visible implementation operations. The suite does not reach for them: add and delete are the only public writers, search is the only public corpus read, and the handle walk returns through the origin named by the caller. The surface is therefore a property the compiler enforces rather than a boundary the suite merely describes.
+> Stale, Gone and NotText are each provoked at a caller-visible seam: a file is edited under a handed-out handle, a document is deleted after a handle is returned, and bytes at a named path are not UTF-8. NotFound is also provoked by an absent path. The same words appear in part tests, but this suite reaches them through material an agent named, so the composition is a different claim.
+> Incompatible is provoked as well: a file at another path is not a store this build can open, so no verb runs against it. The vocabulary's five refusals and its terminal end therefore all have deliberate suite cases rather than relying on the part tests alone.
+> The Stale edit keeps the byte count - warms for cools, in every paragraph - so the span still reads and the digest is what disagrees. A shorter file would have staled the handle by moving the offsets, which is the accident rather than the claim the design makes.
+> One model for the whole binary, behind a mutex, and one shared cache is the one the crate's own tests fill. add and search take the seam mutably, so the alternative was an inference session and a 133 MB fetch per test; the price is what decided it. A poisoned lock is stepped over rather than propagated, so one test that panics is not reported as every test failing.
+> Search is measured here as a crossing and not as a ranker: two documents on grossly separated subjects, one query, and the claim is that the best hit belongs to the document the query is about. The fixture is cfg(test) and exported nowhere, as its node ruled, so the suite writes its own material and the finer instrument stays where it was built. Coarse separation is the most the fixture's own node says a hand-derived answer carries.
+> Measured from a clean checkout, which is what the criterion asks: the tree copied without target, the model cache emptied, and cargo test run there - it builds the dependencies, downloads the ONNX Runtime, fetches the 133 MB model and passes 123 tests in 188s wall. Warm, the run is 23s: 9.0s for the 113 the parts own and 13.8s for the 10 this node adds. The concurrent first-run download the embed node built for is exercised by that run rather than assumed.
+> Measured: 123 tests pass, 10 of them the suite's. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived.
+---
+[checkpoint] Judge the library (complete)
+Read the suite and decide whether command and served tool follow.
+Serves: the delivery ruling put the decision here rather than at the start.
+Absent: the next two stages get built because they were mentioned once.
+Known by: a decision recorded with what it was made from.
+-> mend-refusals
+-> mend-rot
+-> mend-slice
+-> mend-surface
+-> tests
+> The library checkpoint is met by 123 unit tests and 10 dependency-facing tests passing, with cargo fmt --all -- --check, cargo clippy --workspace --all-targets --all-features -- -D warnings, cargo doc --workspace --no-deps, and cargo deny check passing on 2026-08-21. cargo deny reports duplicate-version warnings but no policy failures. The separate command remains outside this graph; MCP is the next delivery and its contract and execution record are in human-authored-specs/mcp.md and mcp.vine.
+---
+[mend-slice] Make an oversized chunk unconstructible (complete)
+Hold the chunk limit where it cannot be forgotten.
+Serves: vocabulary.md says a chunk too large to embed cannot be constructed, and nothing enforces it.
+Absent: add files a chunk whose embedding describes a prefix of its own text, with no refusal and no error.
+Known by: a text built to force two consecutive skipped cuts yields either a chunk within limit or a refusal, never a truncated embedding; and a text whose cuts never advance does not collapse into one chunk.
+-> slice
+-> types
+> The adversary is two consecutive skipped cuts: three windows merged is 254 x 3 + 2 specials = 764 tokens against a 512 limit. Ordinary prose will not produce it, so the test has to construct it.
+> Truncation at the embed seam is silent today. Either make it loud or make it unreachable; a silent prefix is the one outcome the ladder exists to rule out.
+> Measured before anything was designed, because the cutting rule rested on two facts nobody had checked. The tokenizer's offsets are byte offsets into the original text, not character offsets - `e` acute at the front of a string comes back as (0, 2). And one character can carry several tokens: a Hangul syllable is decomposed to three jamo and comes back as three tokens all beginning at the same offset, while kana and Latin advance one character at a time.
+> The adversary this node names is not reachable through this tokenizer, and that is the finding rather than the fix. A skipped cut needs a whole window of tokens - 255 of them - to share one start offset, which needs one character the tokenizer spends 255 tokens on; the longest run measured is three. So the merged chunk was a hole in the argument, not a defect anyone could reach, and the rule was still resting on an argument rather than on anything that enforces it.
+> The grid is gone. A window is now measured from the cut before it rather than from a grid laid over the whole text, and the loop runs while more than a window of tokens is left - so a chunk holding more than a window is the exit condition rather than a check standing beside it. Under the grid, a candidate that could not be cut at handed its tokens to the next chunk and the grid marched on regardless, which is how two in a row handed on three windows.
+> A candidate that cannot be cut at is an error rather than passed over. Stepping back to an earlier token was written and then deleted: a candidate only fails when every token from the chunk's first shares one start, and every earlier candidate in that window shares it too - so the step back could never find anything, and it was machinery for a case it could not serve. The one lawful answer is to say so, since cutting inside a character is not a span at all and a second cutting rule is what the slice node ruled out.
+> The check that a chunk fits the model lives at the embed seam and nowhere else. Slice cuts to the budget, but a chunk re-tokenized on its own can drift, and a query never passes through slice at all - so the count that decides belongs where the model is, taken on the exact string the model will read. Slice's guarantee and embed's check are two claims, not one written twice: slice's is about the cut it produced, embed's is about the text it is handed.
+> Embed asks its own tokenizer rather than holding a second one. fastembed's tokenizer is configured to truncate at the model's limit, and a truncated encoding carries what was dropped - so the question `would this be truncated` is put to the tokenizer that would do the truncating. No threshold is restated in embed.rs and the truncation-off configuration is not written twice. slice.rs still holds the only tokenizer that counts.
+> The query path was the reachable defect, and closing it is what this node actually bought. An agent's query goes straight to embed, so a long query was answered with an embedding of its first 512 tokens and nothing said so; no amount of care in slice could have caught it. The chunk path was already safe by argument, which is why the fix had to be at the seam rather than at the cut.
+> It is io::Error with InvalidInput, not a sixth refusal. A chunk over the limit is a defect in slice, and a query over it is a caller handing the model more than it accepts - both mistakes rather than decisions about material an agent named, which is the reading the store node gave the same shape.
+> Both acceptance criteria are driven against the rule with offsets built by hand, because no text this tokenizer answers reaches them. The run in the test is 510 tokens on one character, which is exactly the two consecutive skipped cuts this node names. That the old rule would have merged three windows there is derived rather than measured, since the rule that did it is gone.
+> Measured by bisection rather than assumed: `kettle` is one token under this pin, 510 of them are embedded and 511 are refused, so the boundary the tokenizer enforces is the 512 the model accepts once the two it adds are counted. That pair is now a test, so the instrument carries the known answer it was checked against.
+> Superseded, and recorded here rather than rewritten there: the slice node's decision that a candidate which does not advance is passed over rather than adjusted, and its reasoning that the slack absorbs the merge. The slack does absorb one merge and not two, which is what this node was opened for.
+> Measured: 130 tests pass, 10 of them slice's and 7 embed's, in 4.7s for the library and 5.4s for the suite from the warm model cache. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived; two files were edited and no other part was reached past.
+---
+[mend-surface] Narrow the surface to the contract (complete)
+Narrow the public surface to the verbs the vocabulary names.
+Serves: architecture.md says no verb enumerates the corpus and only add and delete write.
+Absent: the integration suite passes because the API is wider than the contract it claims to measure.
+Known by: the crate exposes open and the five verbs and nothing else reachable from outside; the suite either compiles without reaching past them or fails loudly.
+-> store
+-> tests
+> The suite reads whole document text through Store::document. If narrowing breaks the suite, that is the finding rather than an obstacle - a test that needs a hatch is measuring the hatch.
+> Vector::as_slice, Embedding::vector and Model::new are on the same list: architecture.md says nothing outside embed sees a vector, and a public Model::new lets a fresh store be stamped with a name no Embed produces.
+> The line drawn at this stage, before mend-rot removed the unused cache helper, was: public is open, the five verbs, the two seams a caller must build to call them - Store::cache, Embed::load, Embed::model, Slice::new - the constructors a caller must reach for to name material (Origin::parse, Query::new, Count::new, Text) and read-only accessors on the values in flight. Everything that constructs what the corpus is made of, or reads it back out, is crate-visible.
+> The fork not taken, recorded so it is reviewed rather than rediscovered: open could have taken only a path and loaded the model itself, which is literally what vocabulary.md writes and would have closed Embed and Slice too. This node's own second decision rules against it - a public Model::new only lets a store be stamped wrongly if a caller is holding a model, so the shape it is written against is the one where the caller holds the seams. The narrower open is a change to what open is, not to what is reachable from it, and it belongs to a node that says so.
+> After narrowing, Store::replace, Store::document and Store::scan are pub(crate), which is the ruling the tests node left as data. Fetch is crate-private as well and is the only reach to the network, through add.
+> Model stays exported and has nothing public on it: no constructor, no name, no dimension, no limit. Store::open names the type and Embed::model is the only thing that yields one, so a store can only be stamped by a model this build loaded. Document, Embedding, Vector, Limit and Window are not exported at all - no signature a caller can call names them - and the production table in lib.rs now writes those rows without a link and says why, so the one-for-one check still passes by eye.
+> The constructors of the values scry mints - Chunk, Handle, Digest, Passage, Hit, Provenance, Incompatible - are pub(crate), which narrows the types node's ruling that constructors are public. Nothing was taken away: Span::new was already crate-private, so a caller could not build a Span and therefore could not reach any of them. What is removed is public surface that was already uncallable. The types node's reason still stands where it matters - a Handle that came back from a hit is still just a claim, refused when it disagrees with the text at its span.
+> Handle::mint and Handle::verify, Score::cosine, Text::span and Text::at, Slice::spans, and Embed's passages, query and tokenizer_file are pub(crate). Minting is what scry chooses to hand out and verifying is a verb's judgement; the rest take or return something a caller cannot name.
+> Embed::passage is deleted rather than demoted. Once the seam closed it had no caller in the crate - add embeds a document's chunks in one batch - so it was dead code in a shipped build. Its four tests take one passage out of the batch through a helper, which is the path add actually runs.
+> The suite's walk back to the bytes now reads the file the origin names and cuts it at the span, instead of reading the document out of the store. That is the claim provenance makes and the one architecture.md writes down - the path back to bytes runs through origin, into the world, not through our file - so the test got stronger by losing the hatch. It is also why Origin::as_path and Span::start and end stay public.
+> Where the suite asserted nothing was filed by asking the store for a document, it now asks search and expects nothing back. No verb enumerates, so the only reading of the corpus a caller has is the one that answers a query.
+> Incompatible is provoked by a file at a store's path that this build did not write, rather than by a corpus met by another model. A caller can no longer name a model this build does not hold, which is the narrowing working rather than a case going untested - the store's own tests still stamp a second model and meet it, and they can, because they are inside the crate. What the suite keeps is that the end is reached, that it names the path, and that it is that file and not this build which ended it.
+> Limit::tokens and Window::tokens now take self by value. clippy's trivially_copy_pass_by_ref exempts public API, so the lint only appeared once those types stopped being exported - the narrowing measured something the wide surface had been hiding.
+> Measured: 134 tests pass, 124 the library's and 10 the suite's, in 6.4s and 8.2s from the warm model cache. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, cargo doc has no warnings - the production table's links were the thing that would have broken quietly - and cargo deny is clean over advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived.
+---
+[mend-refusals] Fix what answers wrongly at the edges (complete)
+Fix the places that answer wrongly at the edges.
+Serves: four claims are held by code that gives the wrong answer on inputs nobody tried.
+Absent: a corrupt stored vector mis-ranks silently, a malformed url becomes a key, an overflowing ttl reads fresh, and a corrupt store is reported as weather rather than as a store this build cannot use.
+Known by: each has a test that provokes it deliberately.
+-> fetch
+-> origin
+-> store
+> Four adversaries, each named: a stored vector that parses as finite floats but is not the one written; the url http://[::1 with an unclosed bracket; a ttl whose addition to fetched_at overflows; a redb file that is corrupt rather than foreign.
+> The digest covers the text half of a record and nothing covers the vector half. That asymmetry is the bug, not the renormalisation.
+> The record covers its own bytes, and LAYOUT rose to 2 because the shape changed. The whole record rather than the vector half alone: a cover over one half needs a boundary, the boundary is read off the record, and a length that moved is one of the things being guarded against - so both halves are read back on the same terms and there is nothing to place wrongly. A store written under 1 is another layout and says so at open.
+> The vector adversary is provoked twice in one test, because refusing it only means something beside what accepting it costs. A float is overwritten with another finite float pointing elsewhere and the record is refused; then the same altered bytes are given a checksum of their own and decode, and what comes back is an embedding nobody wrote, with no refusal and no error. The second half is the price of the first, measured rather than argued.
+> A record found wrong during a verb is io::Error InvalidData and not Incompatible. The vocabulary gives Incompatible to open alone, so corruption caught at open is the end and corruption caught at the first read of one document is weather at the point of use. Recorded rather than hidden: the two answers are the same fact reaching scry through two doors, and only one of them has a word.
+> An authority that opens a bracket must close it, or the input named no document. Read as a bare host, http://[::1 split at its last colon into the host [: and the port 1, and came back out as http://[::1/ - a key whose spelling names something the caller did not write and which parse would read differently again. http://[] went the same way. Only closure is ruled here: a host carrying a space or a non-ASCII label is still a key, and refusing those is a policy this node was not given and would change which documents scry accepts.
+> expired measures the material's age against the ttl rather than now against a deadline. An age is a duration between two moments that both exist, so nothing leaves the range the platform can hold and there is no answer to invent.
+> Data, and it is the honest half of that adversary: the wrong answer is not reachable with any clock. An addition that overflows puts the deadline past every moment a SystemTime can hold, so now can never be past it, and false was already the answer a deadline would have given. What was wrong is that the answer was defaulted rather than computed - is_some_and reads if I cannot tell, say fresh, which is the pattern the ladder rules out whether or not a caller can see it. The test states the provocation as an assertion that the sum is None, so it is standing on the adversary rather than near it.
+> Corruption is the end, superseding the store node's ruling and recorded here rather than rewritten there. That node declined to fold it in because corrupt is not another model or another layout, which reads the word by its cause; this reads it by what it does. Nothing proceeds, no verb runs, and no second attempt mends it - while weather says try again, which corruption never will. Incompatible's own sentence widened to `the store at X is not one this build can use', and which of the three it is changes nothing an agent can do.
+> Left for the checkpoint rather than settled here: vocabulary.md names two causes for Incompatible and there are now three. The human-authored specs are not mine to edit, and the widened sentence lives in incompatible.rs where a reader meets it.
+> One classification, not four. Every redb failure on the open path leaves as redb's own error and is read once by fault(), which answers end or weather - so the judgement is in one place instead of at each call site, and stamped() converts nothing. A corrupt read there answers false, which is already the answer that sends open to the end.
+> Measured about redb, and recorded because it bounds what this node bought: over single-byte flips across the first 96 bytes of a store, one offset answers Corrupted, one reads as another layout, 16 panic inside redb, and the rest open unchanged because the bytes were never allocated. A file truncated in half panics too. A panic inside a dependency is not something the crate-wide denial of panic reaches, so `a corrupt store opens for nobody' holds for the corruptions redb reports and not for the ones it dies on. The test names the offset it found and how it was found, since redb publishes no layout to read it off.
+> Reviewed the three nodes this depends on before starting, as the root asks. store's record was where two of the four lived and its own decision named the asymmetry; origin's split_host_port was the one place a url's authority is read, and its rule that None is for input naming no document is what an unclosed bracket now takes; fetch was reviewed and not touched - it absorbs every origin it cannot read as NotFound, so a url refused at parse never reaches it and no refusal moved. provenance was reached past, and it is not among the dependencies: expired is the one implementation of the projection and the types node put it there.
+> Measured: 134 tests pass, 124 the library's in 4.9s and 10 the suite's in 8.6s from the warm model cache. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, and cargo deny is clean - advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived: the record's checksum is hmac-sha256, which the handle node already declared.
+---
+[mend-rot] Delete what nothing calls (complete)
+Delete what nothing calls, and share what everything rewrites.
+Serves: deletion is the cheapest operation available and seven items have no callers.
+Absent: readers spend attention on code that does nothing, and duplicated test scaffolding drifts.
+Known by: the crate builds with them gone, and what survives is reached by a verb or a test.
+-> tests
+> At review start, Store::cache was the notable one: it existed so the store and the model cache could not name different disks, and five call sites hardcoded a temp path instead. Either the callers used it or it went - the hazard it prevented was realised inside the crate that wrote the remedy.
+> Test scaffolding is rewritten four to seven times and has already drifted: pair() in store.rs and the same construction inlined differently in delete.rs.
+> Re-measured rather than taken from the node, by counting call sites across the crate and the suite: four items have no caller now where seven did when this was written. What is gone is Span::len, AddRefusal::origin, HandleRefusal::origin, and Store::cache with the CACHE constant and the one test that reached it. The other three already had callers or had already left, so the count is what moved and not the reading.
+> Store::cache goes. The property it defends - the store and the weights naming one disk - has no stated cost of loss, and nothing in the stamp or the record depends on where the weights sit; the only way for a caller to honour it is a cache per store, which the crate's own tests priced at a 133 MB fetch per test and declined. An invariant nobody will pay for should not keep its defense. A caller names the cache when it loads Embed, which is what every call site in the crate and the suite already did.
+> The two refusal accessors and Span::len were second ways to read a fact already handed over: the refusal variants are public and carry the origin, and a span's start and end are public. Nothing called any of them, and no test lost a claim by their going.
+> The scaffolding lives in one cfg(test) module, scaffold, which ships in no build and is exported nowhere, as fixture does. What moved there is what more than one module was writing for itself - the cache, the scratch directory, the model, the store, the origin, the hand-built document, its embeddings, filed, held, minted and count. What stayed is what one module alone says: the wrapper around its own verb, and the text it is measured over.
+> A scratch directory takes the caller's own module_path!(), so two modules that name a test the same way get a directory each. Before, each module hand-wrote scry-<part>-<test>, which is the same collision answered by remembering; delete and store both had a test called absent.
+> One fetched_at for every hand-built document, and it is not the epoch. provenance's tests read it back off a document built on the epoch, so a fetched_at dropped anywhere between the record and the read would have come back as the value it started from and said nothing. store's own builder already used a non-zero moment; that is the one that survived.
+> The embeddings a hand-built document is filed with are the two axes, alternating, rather than one vector repeated. Measured while making them differ: a vector normalised from [1,1] does not read back out of the record bit for bit, because decode renormalises, and the scan test that compares what was read against what was written failed on it. The axes are what survive that renormalisation exactly, so the comparison stays an equality rather than becoming a tolerance.
+> Measured: 133 tests pass, 123 the library's in 6.6s and 10 the suite's in 8.0s from the warm model cache. One test fewer than before, which is the one that reached Store::cache. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, cargo doc has no warnings - lib.rs named Store::cache in the seams a caller builds - and cargo deny is clean over advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived. 582 lines left and 60 arrived across the files that were there, against about 200 in the one new one.

@@ -1,0 +1,36 @@
+[package]
+name = "scry"
+version = "0.1.0"
+description = "A corpus an agent can search, add to, and trace back to its bytes."
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# The three named in architecture.md, and nothing a later node has not asked
+# for yet. fastembed's defaults reach for the platform's TLS, for image models,
+# and for hf-hub; all three are dropped, so the tree stays pure Rust, carries no
+# decoder for a modality scry does not index, and does not pay ten crates for a
+# download scry already has ureq for.
+#
+# tokenizers is declared exactly as fastembed declares it — same version, same
+# single feature — so slice names the crate it uses rather than reaching through
+# fastembed for it, and the tree gains nothing: it is already there, and feature
+# unification leaves the build identical.
+#
+# hmac-sha256 is the handle's SHA-256, and is in the tree for the same reason:
+# ort-sys already carries it, it has no dependencies of its own, and its licence
+# is one deny.toml already allows. It is a self-contained hash and nothing else.
+[dependencies]
+fastembed = { version = "5.17.3", default-features = false, features = [
+    "ort-download-binaries-rustls-tls",
+] }
+hmac-sha256 = "1.1.14"
+redb = "4.1.0"
+tokenizers = { version = "0.22.2", default-features = false, features = [
+    "onig",
+] }
+ureq = "3.3.0"
+
+[lints]
+workspace = true

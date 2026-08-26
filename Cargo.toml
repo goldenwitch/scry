@@ -1,0 +1,34 @@
+[workspace]
+members = ["crates/scry", "crates/scry-mcp"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.94"
+license = "MIT"
+repository = "https://github.com/goldenwitch/scry"
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+
+# Lints are workspace-level so a second crate cannot arrive with a laxer set.
+# Everything here is a check that fails loudly. `unsafe_code` is structural:
+# `forbid` cannot be lifted by a crate-level attribute, so the mistake has
+# nowhere to be expressed.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unreachable_pub = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+# The refusals in vocabulary.md are the point: a panic is not one of them, so
+# the shapes that produce panics are refused at compile time rather than
+# remembered.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
