@@ -3,21 +3,18 @@ prefix: lib
 title: scry as a library
 ---
 [root] scry as a library (complete)
-The first delivery stage: the core library. The checkpoint is the end of this
-graph, and the next delivery is the MCP server recorded in mcp.vine; a separate
-human-facing command remains unplanned.
-Each node states what it serves, what its absence would cost, and how you would
-know it works. A node that cannot state the first is a candidate for deletion.
-Each node is dispatched to a subagent, whose first job is the nodes it depends
-on: confirm their work is right, and confirm it has everything it needs, before
-starting its own.
-Where these documents do not decide something, the owning node decides it and
-records the choice, so the dependant reviews it instead of discovering it.
+The first delivery stage is complete; this graph now carries the next major library contract change, set upsert, before the MCP graph consumes it. The old checkpoint remains the baseline, and set-checkpoint is the new end of this stage.
+Each node states what it serves, what its absence would cost, and how you would know it works. A node that cannot state the first is a candidate for deletion.
+Each node is dispatched to a subagent, whose first job is the nodes it depends on: confirm their work is right, and confirm it has everything it needs, before starting its own.
+Where these documents do not decide something, the owning node decides it and records the choice, so the dependant reviews it instead of discovering it.
+The set-upsert proposal is guidance for this stage; this graph records the implementation ownership and the decisions found while visiting each node.
 -> checkpoint
+-> set-checkpoint
 @guidance text/markdown docs/product-planning/vocabulary.md
 @guidance text/markdown docs/product-planning/architecture.md
 @guidance text/markdown docs/product-planning/initial-spec.md
 @guidance text/markdown docs/product-planning/lifecycle.md
+@guidance text/markdown agent-proposed-specs/set-upsert.md
 ---
 [model] Choose the model (complete)
 Pick the embedding model from the shortlist, on published benchmarks.
@@ -443,3 +440,78 @@ Known by: the crate builds with them gone, and what survives is reached by a ver
 > One fetched_at for every hand-built document, and it is not the epoch. provenance's tests read it back off a document built on the epoch, so a fetched_at dropped anywhere between the record and the read would have come back as the value it started from and said nothing. store's own builder already used a non-zero moment; that is the one that survived.
 > The embeddings a hand-built document is filed with are the two axes, alternating, rather than one vector repeated. Measured while making them differ: a vector normalised from [1,1] does not read back out of the record bit for bit, because decode renormalises, and the scan test that compares what was read against what was written failed on it. The axes are what survive that renormalisation exactly, so the comparison stays an equality rather than becoming a tolerance.
 > Measured: 133 tests pass, 123 the library's in 6.6s and 10 the suite's in 8.0s from the warm model cache. One test fewer than before, which is the one that reached Store::cache. cargo clippy passes the workspace's pedantic set over all targets, cargo fmt is clean, cargo doc has no warnings - lib.rs named Store::cache in the seams a caller builds - and cargo deny is clean over advisories, bans, licences and sources. Cargo.lock did not move and no dependency arrived. 582 lines left and 60 arrived across the files that were there, against about 200 in the one new one.
+---
+[set-contract] Fix the set-upsert library contract (complete)
+Propagate the accepted proposal into the authoritative library product documents.
+Files: docs/product-planning/initial-spec.md, docs/product-planning/vocabulary.md, docs/product-planning/architecture.md.
+Do: define add over a canonical BTreeSet<Origin> and shared ttl; name AddReport, AddResult, and AddOutcome; preserve replacement, no-enumeration, sequential per-document batching, refusal continuation, weather halting, and per-origin visibility.
+Accept: the three documents agree with the proposal and leave no unresolved core semantic choice for implementation.
+-> checkpoint
+> Implemented the three authoritative library document changes: initial-spec now states set add, vocabulary defines origins and AddReport outcomes, and architecture records sequential per-origin commit visibility. The documents passed git diff --check.
+---
+[set-origin] Order canonical origins (complete)
+Make canonical origins orderable for deterministic set traversal and reports.
+Files: crates/scry/src/origin.rs and its unit tests.
+Do: implement ordering consistent with the canonical Display spelling, while keeping Origin::parse as the only constructor and preserving normalization and equality.
+Accept: equivalent spellings still produce one BTreeSet member, ordering is deterministic and consistent with equality, and no second origin construction path appears.
+-> origin
+-> set-contract
+-> types
+> Measured after implementation: 16 origin unit tests pass, including canonical Display ordering and normalized-equivalent BTreeSet deduplication.
+---
+[set-store] Separate preparation from commit (complete)
+Give add enough store ownership information to distinguish a pre-write failure from a failed write phase.
+Files: crates/scry/src/store.rs, crates/scry/src/store/record.rs, and store unit tests.
+Do: split or privately phase-tag record preparation and the per-origin redb commit without adding set metadata, a public writer, a second record layout, or a second transaction boundary.
+Accept: record encoding errors are observable as pre-write failures, every write-phase error is observable as uncertain, successful replacements remain one committed record, and a compatible existing store remains readable.
+-> set-contract
+-> store
+> Measured after implementation: 17 store unit tests pass, including preparation failure preserving an existing record and a deterministic write-phase failure after preparation. The redb record layout remains unchanged.
+---
+[set-add] Orchestrate the canonical batch upsert (complete)
+Implement the sequential set upsert behind the private Add implementation port and the supported public Store facade.
+Files: crates/scry/src/add.rs, crates/scry/src/lib.rs, and add unit tests.
+Do: expose AddReport, AddResult, and AddOutcome as required returned values; process each canonical origin once; keep fetch, slice, and document-chunk embedding per member; continue after AddRefusal; halt after Failed or Uncertain; append NotAttempted for the remaining members; make empty input a no-op; preserve one public Store verb surface with no add_one.
+Accept: report order and cardinality are exact, earlier commits survive a halt, refused and pre-write-failed origins leave prior records untouched, and no set-wide enumeration, scheduler, retry, or aggregate limit is introduced.
+-> add
+-> embed
+-> fetch
+-> set-contract
+-> set-origin
+-> set-store
+-> slice
+-> verb-abstractions
+> Measured after implementation: 12 add unit tests pass, including empty input, refusal continuation, Failed and Uncertain halting, NotAttempted filling, concrete commit failure classification, and same-verb decorator composition.
+---
+[set-integration] Prove set behavior through the public library (complete)
+Extend the dependency-facing library evidence to cover the set contract and its document/handle consequences through the supported public Store facade.
+Files: crates/scry/tests/suite.rs.
+Do: exercise singleton and multi-origin upserts, empty input, shared ttl with per-member fetched_at, refresh handle behavior, refused members, per-origin visibility, and delete remaining the source of Gone. Use Store::open and the public verb methods; do not reach into private abstractions or storage internals.
+Accept: the integration suite compiles against only the supported public API, multiple local origins become searchable, mixed refusals complete without halting, and refreshed unchanged spans verify while changed spans are Stale rather than Gone.
+-> set-add
+-> set-origin
+-> set-store
+-> verb-abstractions
+> Measured after implementation: 15 dependency-facing integration tests pass, including multi-origin searchability, canonical order, omitted-origin preservation, mixed refusals, shared ttl, per-member fetched_at bounds, and same-content refresh handle validity.
+---
+[set-checkpoint] Judge the set-upsert library stage (complete)
+Validate the library set stage as a complete behavior and boundary change.
+Files: the existing library validation commands and the completed graph record.
+Do: run workspace tests, formatting, clippy, docs, and cargo-deny; review the contract, store phase boundary, public surface, unit evidence, and integration evidence together.
+Accept: the set-upsert library contract is documented, every outcome and transaction boundary has executable evidence, and the stage is ready for the MCP adapter with no unresolved library decision.
+-> set-add
+-> set-contract
+-> set-integration
+-> set-store
+-> verb-abstractions
+> Completed on 2026-08-29. Final workspace validation passed: cargo test --workspace --all-targets reported 133 library unit tests, 15 library integration tests, 2 MCP mapper tests, and 1 MCP process test; cargo fmt --all -- --check, cargo clippy --workspace --all-targets --all-features -- -D warnings, cargo doc --workspace --no-deps, and cargo deny check all passed. Cargo-deny retained only the existing duplicate-version warnings and reported advisories, bans, licenses, and sources OK.
+> The private per-verb abstraction decision is implemented and remains outside the supported API. The set-upsert library stage is complete and authorizes the MCP set stage.
+---
+[verb-abstractions] Define one abstraction per verb (complete)
+Canonicalize each verb behind a private implementation abstraction while keeping the supported public surface minimal.
+Files: the five verb modules under crates/scry/src, crates/scry/src/lib.rs, and focused abstraction tests.
+Do: define one private capability boundary for add, delete, search, neighbours, and provenance; let Store remain the concrete corpus owner and public facade; make same-verb implementation wrappers composable inside the library; preserve one public invocation path and the existing domain failure algebra.
+Accept: each verb has one private abstraction, private implementations can be decorated or replaced in library tests, public callers still see only Store::open and the supported verb methods plus required returned values, and no public trait, marker, generic execute, or universal operation-composition grammar is added prematurely.
+-> checkpoint
+-> set-contract
+> Measured after implementation: all five verbs have private implementation ports with Store as the sole public facade; the add decorator composition test passes. No public traits, marker, generic execute, or duplicate invocation path was exported.

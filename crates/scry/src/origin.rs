@@ -1,6 +1,7 @@
 //! `origin`: a path or a url, and the identity of a document.
 
 use core::fmt;
+use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
 /// The two schemes `fetch` reads over the network. A string naming any other
@@ -91,6 +92,18 @@ impl fmt::Display for Origin {
             Kind::Path(path) => write!(f, "{}", path.display()),
             Kind::Url(url) => write!(f, "{url}"),
         }
+    }
+}
+
+impl Ord for Origin {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.to_string().cmp(&other.to_string())
+    }
+}
+
+impl PartialOrd for Origin {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -203,6 +216,8 @@ fn normalise_path(input: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::Origin;
 
     fn key(input: &str) -> Origin {
@@ -348,5 +363,26 @@ mod tests {
                 "{spelling}"
             );
         }
+    }
+
+    #[test]
+    fn a_set_iterates_in_canonical_spelling_order() {
+        let mut origins = BTreeSet::new();
+        origins.insert(key("z.md"));
+        origins.insert(key("https://example.com/doc"));
+        origins.insert(key("a.md"));
+
+        let actual = origins.iter().map(ToString::to_string).collect::<Vec<_>>();
+        let mut expected = actual.clone();
+        expected.sort();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn normalized_equivalent_origins_are_one_set_member() {
+        let mut origins = BTreeSet::new();
+        origins.insert(key("HTTPS://Example.COM:443/doc#section"));
+        origins.insert(key("https://example.com/doc"));
+        assert_eq!(origins.len(), 1);
     }
 }

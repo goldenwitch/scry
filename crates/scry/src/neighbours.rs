@@ -15,6 +15,41 @@ use crate::refusal::HandleRefusal;
 use crate::span::Span;
 use crate::store::Store;
 
+trait NeighboursVerb {
+    fn neighbours(
+        &self,
+        handle: &Handle,
+        count: Count,
+    ) -> io::Result<Result<Vec<Passage>, HandleRefusal>>;
+}
+
+impl NeighboursVerb for Store {
+    fn neighbours(
+        &self,
+        handle: &Handle,
+        count: Count,
+    ) -> io::Result<Result<Vec<Passage>, HandleRefusal>> {
+        let origin = handle.chunk().origin();
+        let Some(document) = self.document(origin)? else {
+            return Ok(Err(HandleRefusal::Gone(origin.clone())));
+        };
+        if handle.verify(&document).is_none() {
+            return Ok(Err(HandleRefusal::Stale(origin.clone())));
+        }
+        let mut passages = Vec::new();
+        for span in around(document.spans(), handle.chunk().span(), count) {
+            // Every span here came from the document's own cut, so this mints;
+            // the alternative to saying so is a panic, which is denied
+            // crate-wide.
+            let passage = Handle::mint(&document, span).ok_or_else(|| {
+                io::Error::other("a span of the document is not one it was cut into")
+            })?;
+            passages.push(passage);
+        }
+        Ok(Ok(passages))
+    }
+}
+
 impl Store {
     /// Checks `handle` against the text held now, then answers with up to
     /// `count` of the passages around it, in reading order.
@@ -59,24 +94,7 @@ impl Store {
         handle: &Handle,
         count: Count,
     ) -> io::Result<Result<Vec<Passage>, HandleRefusal>> {
-        let origin = handle.chunk().origin();
-        let Some(document) = self.document(origin)? else {
-            return Ok(Err(HandleRefusal::Gone(origin.clone())));
-        };
-        if handle.verify(&document).is_none() {
-            return Ok(Err(HandleRefusal::Stale(origin.clone())));
-        }
-        let mut passages = Vec::new();
-        for span in around(document.spans(), handle.chunk().span(), count) {
-            // Every span here came from the document's own cut, so this mints;
-            // the alternative to saying so is a panic, which is denied
-            // crate-wide.
-            let passage = Handle::mint(&document, span).ok_or_else(|| {
-                io::Error::other("a span of the document is not one it was cut into")
-            })?;
-            passages.push(passage);
-        }
-        Ok(Ok(passages))
+        <Self as NeighboursVerb>::neighbours(self, handle, count)
     }
 }
 

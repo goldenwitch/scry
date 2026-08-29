@@ -3,16 +3,17 @@ prefix: mcp
 title: scry over MCP
 ---
 [root] scry over MCP (complete)
-The second delivery stage: expose the completed scry library through a caller
-facing MCP stdio process. A separate human-facing command remains unplanned.
+The MCP delivery is complete for the singleton add API; this graph now carries the set-upsert process boundary after the library set checkpoint. A separate human-facing command remains unplanned.
 Each node records the boundary it owns and the check that made it true.
-This graph ends at process-level MCP validation. VS Code host registration and
-Chat invocation are separate lifecycle stages documented in lifecycle.md.
+This graph ends at process-level MCP validation. VS Code host registration and Chat invocation are separate lifecycle stages documented in lifecycle.md.
+The cross-file order is deliberate: library.vine set-checkpoint must complete before set-mcp-adapter starts, and this graph records that gate in the affected node descriptions.
 -> e2e
+-> set-mcp-checkpoint
 @guidance text/markdown docs/product-planning/mcp.md
 @guidance text/markdown docs/product-planning/architecture.md
 @guidance text/markdown docs/product-planning/vocabulary.md
 @guidance text/markdown docs/product-planning/lifecycle.md
+@guidance text/markdown agent-proposed-specs/set-upsert.md
 ---
 [protocol] Speak MCP over stdio (complete)
 Implement the JSON-RPC and MCP lifecycle boundary.
@@ -43,8 +44,8 @@ Serves: an MCP client can add, delete, search, widen, and trace corpus content.
 Absent: the protocol would terminate at metadata rather than reach the corpus.
 Known by: the process requires explicit store and model-cache paths, loads the
 pinned embed seam once, opens the store, and keeps all store internals private.
--> protocol
 -> handle-wire
+-> protocol
 > The binary is a separate workspace member, so this boundary cannot use
 > crates/scry private operations. It uses serde and serde_json from centralized
 > workspace dependencies.
@@ -70,3 +71,41 @@ real redb file and real model seam.
 > Measured on 2026-08-21: the MCP test passes, the workspace has 123 library
 > unit tests, 10 library integration tests, and 1 MCP integration test, and
 > formatting, clippy, docs, and cargo-deny all pass.
+---
+[set-mcp-contract] Fix the batch add MCP contract (complete)
+Propagate the accepted set-upsert wire contract into the MCP product document.
+Files: docs/product-planning/mcp.md.
+Do: define the exact origins plus ttl_seconds input, preflight origin validation and normalization, canonical item order, complete versus halted reports, per-item refusal and io errors, structuredContent retention, isError behavior, and non-cancellation on disconnect.
+Accept: the document agrees with the library contract and leaves no unresolved wire or tool-result semantic choice for the adapter.
+-> e2e
+> Implemented and validated docs/product-planning/mcp.md: the add schema is exactly origins plus ttl_seconds, with preflight normalization, complete/halted reports, per-item errors, and non-cancellation semantics. The document passed git diff --check.
+---
+[set-mcp-adapter] Adapt batch reports to MCP (complete)
+Adapt the library set report to MCP through the minimal supported Store facade.
+Prerequisite: library.vine set-checkpoint must be complete before this node starts implementation, including the private one-abstraction-per-verb decision.
+Files: crates/scry-mcp/src/server.rs and crates/scry-mcp/src/wire.rs, with focused adapter tests.
+Do: parse the strict argument object, validate every raw origin before invoking Store::add, fold normalized duplicates into a BTreeSet, serialize every AddOutcome, derive complete or halted status, preserve partial reports in structuredContent, and keep protocol errors distinct from tool results. Isolate wire policy in private helpers rather than adding public backend traits.
+Accept: the advertised schema is exact, no invalid request can start a member, refusals are non-error reports, halted reports set isError true without losing prior items, and no async or cancellation machinery is introduced.
+-> adapter
+-> set-mcp-contract
+> Resolved the earlier adapter test-shape gap without widening the public library surface: private wire fixtures exercise complete and halted report serialization, while the library tests exercise actual Failed and Uncertain causes. The adapter calls the supported Store facade and keeps protocol.rs unchanged.
+---
+[set-mcp-e2e] Prove batch add through the real process (complete)
+Extend process-level MCP evidence to the set add contract.
+Files: crates/scry-mcp/tests/e2e.rs.
+Do: spawn the actual binary, add multiple local files in one call, exercise canonical deduplication and a mixed refusal report, search the resulting corpus, and retain the existing handle exchange and delete/Gone path. Test invalid-origin preflight before any write where the process boundary can observe it.
+Accept: the real process returns the documented structured shapes and all valid members are searchable; the test documents that a lost response is not cancellation rather than inferring rollback.
+-> e2e
+-> set-mcp-adapter
+> Measured after implementation: the real spawned-process test passes with empty add, invalid-origin preflight, normalized duplicate folding, multi-file indexing, mixed refusal completion, searchability, handle exchange, and delete/Gone coverage.
+---
+[set-mcp-checkpoint] Judge the batch MCP stage (complete)
+Validate the MCP set stage after the library set checkpoint.
+Files: the existing MCP validation commands and delivery record.
+Do: run workspace tests, formatting, clippy, docs, and cargo-deny; review schema, adapter mapping, process evidence, and the cross-stage library dependency together.
+Accept: the process exposes exactly the library set contract, all report states have executable or focused mapping evidence, and the stage is ready for host-level registration without new protocol semantics.
+-> set-mcp-adapter
+-> set-mcp-contract
+-> set-mcp-e2e
+> Completed on 2026-08-29 after library.vine set-checkpoint. Final workspace validation passed: cargo test --workspace --all-targets reported 133 library unit tests, 15 library integration tests, 2 MCP mapper tests, and 1 MCP process test; cargo fmt --all -- --check, cargo clippy --workspace --all-targets --all-features -- -D warnings, cargo doc --workspace --no-deps, and cargo deny check all passed. Cargo-deny retained only the existing duplicate-version warnings and reported advisories, bans, licenses, and sources OK.
+> The MCP adapter remains synchronous, uses the minimal supported Store facade, and publishes no new protocol or cancellation machinery. Host registration and Chat invocation remain outside this process checkpoint.

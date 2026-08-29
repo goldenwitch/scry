@@ -16,33 +16,12 @@ use crate::query::Query;
 use crate::score::Score;
 use crate::store::Store;
 
-impl Store {
-    /// Embeds `query`, scans the corpus, and answers with the best `count`
-    /// hits, best first.
-    ///
-    /// A hit is a passage and the score the query gave it, so every answer
-    /// arrives with the handle that vouches for its text — minted from the
-    /// text the store held during this scan, and verifiable against the text
-    /// there now.
-    ///
-    /// Fewer than `count` hits come back when the corpus holds fewer chunks
-    /// than that, and none come back from a corpus holding nothing. Neither is
-    /// a refusal: the vocabulary gives `search` no failure, because a corpus
-    /// with nothing near a query is an answer about the corpus rather than a
-    /// decision about material an agent named.
-    ///
-    /// The order is descending by score. It is what selecting the best `count`
-    /// already computed, so handing back a permutation of it would be
-    /// withholding a fact; but the order within those hits is not something
-    /// anyone derived by hand, so it is a recorded output and not a claim.
-    ///
-    /// # Errors
-    ///
-    /// The disk and the inference session, which are weather. And a query
-    /// embedded by a model other than the one the store was opened with, which
-    /// is a mistake rather than a decision — the same reading `store` gives a
-    /// caller that hands it a corpus it did not open for.
-    pub fn search(&self, embed: &mut Embed, query: &Query, count: Count) -> io::Result<Vec<Hit>> {
+trait SearchVerb {
+    fn search(&self, embed: &mut Embed, query: &Query, count: Count) -> io::Result<Vec<Hit>>;
+}
+
+impl SearchVerb for Store {
+    fn search(&self, embed: &mut Embed, query: &Query, count: Count) -> io::Result<Vec<Hit>> {
         let asked = embed.query(query)?;
         let wanted = count.get().get();
         // A count is a number a caller named, so it never sizes an allocation:
@@ -77,6 +56,37 @@ impl Store {
             Ok(())
         })?;
         Ok(hits)
+    }
+}
+
+impl Store {
+    /// Embeds `query`, scans the corpus, and answers with the best `count`
+    /// hits, best first.
+    ///
+    /// A hit is a passage and the score the query gave it, so every answer
+    /// arrives with the handle that vouches for its text — minted from the
+    /// text the store held during this scan, and verifiable against the text
+    /// there now.
+    ///
+    /// Fewer than `count` hits come back when the corpus holds fewer chunks
+    /// than that, and none come back from a corpus holding nothing. Neither is
+    /// a refusal: the vocabulary gives `search` no failure, because a corpus
+    /// with nothing near a query is an answer about the corpus rather than a
+    /// decision about material an agent named.
+    ///
+    /// The order is descending by score. It is what selecting the best `count`
+    /// already computed, so handing back a permutation of it would be
+    /// withholding a fact; but the order within those hits is not something
+    /// anyone derived by hand, so it is a recorded output and not a claim.
+    ///
+    /// # Errors
+    ///
+    /// The disk and the inference session, which are weather. And a query
+    /// embedded by a model other than the one the store was opened with, which
+    /// is a mistake rather than a decision — the same reading `store` gives a
+    /// caller that hands it a corpus it did not open for.
+    pub fn search(&self, embed: &mut Embed, query: &Query, count: Count) -> io::Result<Vec<Hit>> {
+        <Self as SearchVerb>::search(self, embed, query, count)
     }
 }
 

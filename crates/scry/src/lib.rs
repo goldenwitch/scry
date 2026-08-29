@@ -104,6 +104,7 @@ mod text;
 mod vector;
 mod window;
 
+pub use crate::add::{AddOutcome, AddReport, AddResult};
 pub use crate::chunk::Chunk;
 pub use crate::count::Count;
 pub use crate::digest::Digest;
