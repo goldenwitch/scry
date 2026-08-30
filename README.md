@@ -23,8 +23,8 @@ server setup; capability details belong to MCP discovery.
 
 ## Latest CI benchmark
 
-The latest successful [CI run](https://github.com/goldenwitch/scry/actions/runs/33340499884)
-at commit `cb55df1` matched the pinned [v1 benchmark artifact](benchmarks/baseline-v1.json).
+The latest successful [CI run](https://github.com/goldenwitch/scry/actions/runs/33341193878)
+at commit `58b310a` matched the pinned [v1 benchmark artifact](benchmarks/baseline-v1.json).
 These are algorithmic work and logical-resource reference values, not machine-speed
 scores or elapsed-time claims:
 

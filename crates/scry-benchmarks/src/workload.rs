@@ -15,7 +15,7 @@ use scry::{
     Slice, Store, Text,
 };
 
-const WORKLOAD_ID: &str = "scry-runtime-v1";
+pub(crate) const WORKLOAD_ID: &str = "bge-small-onnx-b1-s32";
 const TTL: Duration = Duration::from_secs(3600);
 const POOLS: &str = "The tide pool holds anemones and limpets after the sea draws back, and the shallow water warms until the flood returns.";
 const ENGINES: &str = "The locomotive raises boiler pressure until the safety valve lifts, and the fireman shovels coal against the long gradient.";

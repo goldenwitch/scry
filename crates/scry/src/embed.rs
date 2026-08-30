@@ -16,6 +16,7 @@ use crate::embedding::Embedding;
 use crate::limit::Limit;
 use crate::model::Model;
 use crate::query::Query;
+use crate::slice::SlicedText;
 use crate::vector::Vector;
 
 /// The repository the weights come from: the ONNX export of
@@ -144,13 +145,16 @@ impl Embed {
         self.validated_many(texts)
     }
 
-    /// Embeds passage text already cut by [`Slice`](crate::Slice).
+    /// Embeds text and bounded passages produced by [`Slice`](crate::Slice).
     ///
-    /// The slicer has already bounded each passage to the model's window, so
-    /// repeating the limit validation here would tokenize every passage twice
-    /// before fastembed tokenizes it for inference.
-    pub(crate) fn passages_from_slice(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
-        self.many(texts)
+    /// The paired value preserves the slicer's model-limit guarantee without
+    /// copying the document text or accepting an unchecked string slice.
+    pub(crate) fn passages_from_slice(
+        &mut self,
+        sliced: &SlicedText,
+    ) -> io::Result<Vec<Embedding>> {
+        let passages = sliced.passages()?;
+        self.many(&passages)
     }
 
     /// Embeds a query, which takes the model's instruction prefix.

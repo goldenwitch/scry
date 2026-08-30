@@ -170,7 +170,7 @@ semantics remain distinct; the add-only baseline shows whether the change
 affected the owning stage.
 -> baseline
 > Fastembed 5.17.3 tokenizes string inputs internally and exposes no pre-tokenized input path; Slice's encoding cannot be reused directly.
-> Store::add now uses passages_from_slice after Slice::spans, while the validated direct passage path remains available to tests and query embedding remains validated.
+> Store::add now consumes SlicedText, an owning value created only by Slice::cut, so the exact source text remains paired with its bounded spans through embedding; query embedding remains validated.
 > The focused embedding suite and four post-change add-only samples pass with unchanged logical counts and fingerprints; the timing reduction is recorded as local diagnostic evidence, not a portable gate.
 ---
 [boundaries] Measure contract-sensitive batching and commit alternatives (complete)
@@ -252,6 +252,6 @@ checks named by validation are available and coherent with the current
 workspace.
 -> contract
 -> validation
-> The graph is a valid 10-task DAG with disjoint implementation ownership; the root performance.md artifact is attached and records iterations 0-3.
+> The graph is a valid 10-task DAG with disjoint implementation ownership; the root performance.md artifact is attached and records iterations 0-3 plus the review corrections.
 > The add-only matrix isolates Store::add after setup, preserves exact logical counts and fingerprints, and keeps timing as local diagnostic evidence; cross-document batching and grouped commits remain explicit deferred contract changes.
-> The tokenization optimization preserves direct over-limit refusal, query validation, set-upsert ordering, per-origin writes, normal-build feature isolation, and the unchanged Grimoire v1 artifact.
+> The tokenization optimization preserves the Slice-to-Embed invariant through SlicedText, direct over-limit refusal, query validation, set-upsert ordering, per-origin writes, normal-build feature isolation, and the explicitly updated identity-only baseline artifact.

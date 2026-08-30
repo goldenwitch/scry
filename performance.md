@@ -144,13 +144,30 @@ batch, and one-origin commit; retain grouped persistence and cross-document
 embedding as contract-sensitive alternatives rather than silently adopting
 them.
 
+## Review Corrections
+
+The PR review found three coherence issues and they are now corrected:
+
+- The benchmark workload id is defined once in `workload.rs` and is used by
+  both the runtime fingerprint and the artifact identity. Regenerating the
+  artifact changed only the deliberate input fingerprint from
+  `1b281e3420b82dfcc4ab8ee5a99a8c6af0ae85c5d7607604e733ea5d86e83ad3` to
+  `3590a5024e61bbd638f7e33320d820a4bae722118f5f3cd3050ebc69311b5bde`.
+- The optimized add path now consumes `SlicedText`, an owning value created
+  only by `Slice`. It keeps the exact source text paired with its bounded spans
+  until embedding finishes, so the model-limit guarantee is represented by the
+  private type rather than by a caller convention.
+- The Iteration 2 timing table now labels its unequal, separate-run medians as
+  descriptive observations. A fixed sample count and protocol are required
+  before treating timing movement as causal evidence.
+
 ## Iteration Log
 
 | Iteration | Date | Change | Workload | Observation | Decision |
 | --- | --- | --- | --- | --- | --- |
 | 0 | 2026-08-30 | No code change | Existing mixed v1 runner | Add work is mixed with search, provenance, neighbours, and delete | Build the add-only matrix first |
 | 1 | 2026-08-30 | Add-only matrix and feature-gated stage diagnostics | Five fixed local cases | Matrix passes; embedding dominates the multi-span case | Investigate passage tokenization first; keep cross-document batching and grouped commits as contract-sensitive alternatives |
-| 2 | 2026-08-30 | Skip redundant post-slice passage validation in `Store::add` | Five fixed local cases | Logical counts and fingerprints unchanged; multi-span embedding median moved from 239.8 ms to 219.5 ms in local samples | Keep the behavior-preserving change; collect more samples before making a small timing claim |
+| 2 | 2026-08-30 | Skip redundant post-slice passage validation in `Store::add` | Five fixed local cases | Logical counts and fingerprints unchanged; descriptive multi-span medians were 239.8 ms pre-change and 219.5 ms post-change in unequal, separate local samples | Keep the behavior-preserving change as exploratory; use a fixed sampling protocol before claiming a timing improvement |
 | 3 | 2026-08-30 | Record and transaction disposition | Five fixed local cases plus 16 focused store tests | Record stage is sub-millisecond; commit remains variable and semantically per-origin | Keep the current record and transaction boundaries; do not group writes without a reviewed contract change |
 
 ## Iteration 2: Skip Redundant Post-Slice Validation
@@ -177,6 +194,11 @@ was corrected.
 | valid-multi-member-v1 | `15820400, 19262300` | `16038300, 15428200, 16657500, 15470700` | 17541350 | 15733250 |
 | refused-member-v1 | `7696300, 9528700` | `7984500, 7970100, 8004900, 7542700` | 8612500 | 7977300 |
 
+These are descriptive medians, not a causal before/after estimate: the
+pre-change set has two samples, the post-change set has four, and the sets
+were collected in separate runs. The timing spread is useful for locating
+work, but a future comparison needs a fixed sample count and protocol.
+
 Every post-change case reproduced the existing fingerprint and exact logical
 counts: source bytes, spans, embedding calls and vectors, writes, member
 outcomes, and zero reads. The focused embedding suite passed all seven tests,
@@ -184,8 +206,9 @@ including direct over-limit refusal, query validation, and the model-limit
 boundary. No Grimoire description, static cost report, or v1 artifact field
 changed.
 
-The stage readings support keeping this change, but the sample sizes and the
-earlier commit-stage spread are too small for a portable timing conclusion.
+The stage readings are compatible with keeping this behavior-preserving
+change, but the sample sizes and the earlier commit-stage spread are too small
+for a portable timing conclusion.
 The next measurement should either repeat this comparison under a fixed
 sampling protocol or move to record preparation and contract-sensitive
 batching, while preserving the current per-document and per-origin contract.
