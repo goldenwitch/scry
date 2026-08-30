@@ -1,3 +1,8 @@
+//! Shape propagation for the offline ONNX benchmark analysis.
+//!
+//! Shape facts are resolved before the bridge writes Grimoire elements, so a
+//! cost expression cannot silently substitute an unknown extent.
+
 #![allow(clippy::type_complexity)]
 #![allow(clippy::unnecessary_wraps)]
 #![allow(clippy::too_many_lines)]

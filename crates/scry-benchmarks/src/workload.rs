@@ -1,3 +1,9 @@
+//! Fixed runtime workloads for the v1 artifact and add-only diagnostics.
+//!
+//! `run` preserves the mixed workload used by the committed artifact.
+//! `run_add_only` is intentionally separate so add-stage measurements cannot
+//! be attributed to search, provenance, neighbours, or delete.
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -73,6 +79,8 @@ impl Drop for Workspace {
 }
 
 pub(crate) fn run_add_only(cache: &Path) -> Result<(), String> {
+    // Load once so model startup is outside every case; each case creates its
+    // own local store and starts collection only after that setup is complete.
     let mut embed = Embed::load(cache).map_err(|error| error.to_string())?;
     let slice = Slice::new(&embed).map_err(|error| error.to_string())?;
     let cases = vec![
@@ -234,6 +242,8 @@ fn collect_add_case(
     origins: &BTreeSet<Origin>,
     expected: ExpectedCounts,
 ) -> Result<AddCase, String> {
+    // Store initialization, including its stamp transaction, is setup rather
+    // than add work and must stay outside the per-case collector.
     let store = match Store::open(&workspace.store_path(), embed.model()) {
         Ok(Ok(store)) => store,
         Ok(Err(error)) => return Err(error.to_string()),

@@ -1,3 +1,9 @@
+//! Minimal offline ONNX parsing for the static benchmark bridge.
+//!
+//! The parser retains graph structure, tensor metadata, constants, and
+//! operator attributes needed for shape propagation and Grimoire generation;
+//! it never loads or executes the runtime graph.
+
 use std::collections::BTreeMap;
 use std::fmt;
 

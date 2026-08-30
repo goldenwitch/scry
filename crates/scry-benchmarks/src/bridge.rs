@@ -1,3 +1,9 @@
+//! Translate the pinned ONNX graph into a validated Grimoire description.
+//!
+//! This is static analysis only: it owns graph identity, addressed elements,
+//! shapes, groups, and cost expressions, while runtime observations stay in
+//! the workload and scry instrumentation modules.
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fmt::Write as _;

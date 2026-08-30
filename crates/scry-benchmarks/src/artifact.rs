@@ -1,3 +1,9 @@
+//! Deterministic serialization for static Grimoire and runtime benchmark data.
+//!
+//! Static cost reports and runtime boundary observations are kept as separate
+//! artifact layers. This module validates and serializes them; it does not
+//! collect timings or infer costs from runtime events.
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;

@@ -32,6 +32,39 @@ runner property enters the artifact. CI prepares the cache before the test and
 comparison steps, so the benchmark gate does not depend on test ordering to
 populate its inputs.
 
+## Choose a mode
+
+Use `--prepare-cache` once when the pinned model files are absent. It is the
+only network-capable mode. Use `--output` when deliberately regenerating the
+committed artifact after an implementation, model, graph, workload, or cost
+model change. Use `--check` for routine review and CI; it regenerates in
+memory, compares exact text, and never overwrites the reference.
+
+For a local add-performance iteration, use the diagnostic workload instead of
+the mixed v1 artifact workload:
+
+```text
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --add-only
+```
+
+`--add-only` loads the pinned model once, prepares each local case outside the
+measurement boundary, and collects only the call to `Store::add`. It reports
+five fixed cases: an empty set, a short singleton, a multi-span singleton, a
+valid multi-member set, and a valid-plus-refused member set. Compare case
+fingerprints and exact logical counts first. The per-stage nanosecond values
+are local diagnostics: repeat the same warm-cache case under the same process
+conditions before using them to choose an optimization, and do not promote
+them to a CI gate.
+
+The add-only command writes no artifact and does not replace the Grimoire v1
+check. Run `--check benchmarks/baseline-v1.json` separately when a change also
+needs to prove that static graph and mixed-workload identity stayed intact.
+
+On a memory-constrained development machine, compilation and test concurrency
+may be reduced with `CARGO_BUILD_JOBS=1`, `CARGO_INCREMENTAL=0`, and
+`RUST_TEST_THREADS=1`. These are operational settings only; they do not enter
+the benchmark identity or any reported gate value.
+
 ## v1 identity
 
 The baseline is one fixed workload:

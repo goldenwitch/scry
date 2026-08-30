@@ -1,4 +1,9 @@
 //! Machine-agnostic baseline artifact runner for scry.
+//!
+//! The normal mode builds the static Grimoire analysis and the mixed v1
+//! runtime workload. `--add-only` is a separate local diagnostic mode for
+//! `Store::add`; it intentionally writes no artifact and does not alter the
+//! CI baseline.
 
 use std::env;
 use std::fs;
@@ -48,6 +53,8 @@ fn run() -> Result<(), String> {
         println!("{USAGE}");
         return Ok(());
     };
+    // Cache preparation is the one explicit network-capable operation. All
+    // later modes require the verified pinned files to already be present.
     if options.prepare_cache {
         Embed::load(&options.cache).map_err(|error| {
             format!(
@@ -59,6 +66,8 @@ fn run() -> Result<(), String> {
         println!("prepared {}", options.cache.display());
         return Ok(());
     }
+    // Keep add-only measurements out of model loading, static graph analysis,
+    // and artifact serialization so their collection boundary stays clear.
     if options.add_only {
         verify_model_cache(&options.cache)?;
         workload::run_add_only(&options.cache)?;
@@ -82,6 +91,8 @@ fn run() -> Result<(), String> {
     if config.batch_size != 1 || config.sequence_length != 32 {
         return Err("v1 baseline requires batch size 1 and sequence length 32".to_owned());
     }
+    // The artifact path deliberately performs static analysis before the
+    // mixed runtime workload; the two evidence layers remain separate.
     let static_model =
         bridge::build_static_model(&model_bytes, config).map_err(|error| error.to_string())?;
     let workload = workload::run(&options.cache)?;
