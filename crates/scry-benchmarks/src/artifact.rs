@@ -114,7 +114,7 @@ struct RuntimeAnalysis {
     add_failed: u64,
     add_uncertain: u64,
     add_not_attempted: u64,
-    owned_live_bytes_high_water: u64,
+    owned_logical_bytes_high_water: u64,
 }
 
 pub(crate) fn build_artifact(
@@ -219,7 +219,7 @@ pub(crate) fn build_artifact(
             add_failed: snapshot.add_failed(),
             add_uncertain: snapshot.add_uncertain(),
             add_not_attempted: snapshot.add_not_attempted(),
-            owned_live_bytes_high_water: snapshot.owned_live_bytes_high_water(),
+            owned_logical_bytes_high_water: snapshot.owned_logical_bytes_high_water(),
         },
     })
 }

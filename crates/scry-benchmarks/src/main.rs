@@ -4,6 +4,8 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use scry::Embed;
+
 mod artifact;
 mod bridge;
 mod onnx;
@@ -12,6 +14,7 @@ mod workload;
 
 const USAGE: &str = "usage:
     scry-benchmarks [--cache PATH] [--model PATH] [--output PATH] [--check PATH]
+                    [--prepare-cache]
 				   [--batch-size N] [--sequence-length N]
 
 The v1 baseline is fixed to batch size 1 and sequence length 32.
@@ -24,6 +27,7 @@ struct Options {
     model: Option<PathBuf>,
     output: PathBuf,
     check: Option<PathBuf>,
+    prepare_cache: bool,
     batch_size: u64,
     sequence_length: u64,
 }
@@ -41,6 +45,17 @@ fn run() -> Result<(), String> {
         println!("{USAGE}");
         return Ok(());
     };
+    if options.prepare_cache {
+        Embed::load(&options.cache).map_err(|error| {
+            format!(
+                "cannot prepare pinned model cache at {}: {error}",
+                options.cache.display()
+            )
+        })?;
+        verify_model_cache(&options.cache)?;
+        println!("prepared {}", options.cache.display());
+        return Ok(());
+    }
     let model_path = options.model.clone().unwrap_or_else(|| {
         options
             .cache
@@ -85,6 +100,7 @@ fn parse_options() -> Result<Option<Options>, String> {
     let mut model = None;
     let mut output = PathBuf::from("benchmarks/baseline-v1.json");
     let mut check = None;
+    let mut prepare_cache = false;
     let mut batch_size = 1;
     let mut sequence_length = 32;
     while let Some(argument) = arguments.next() {
@@ -94,6 +110,7 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--model" => model = Some(PathBuf::from(required(&mut arguments, "model")?)),
             "--output" => output = PathBuf::from(required(&mut arguments, "output")?),
             "--check" => check = Some(PathBuf::from(required(&mut arguments, "check")?)),
+            "--prepare-cache" => prepare_cache = true,
             "--batch-size" => {
                 batch_size = positive(&required(&mut arguments, "batch-size")?, "batch-size")?;
             }
@@ -114,6 +131,7 @@ fn parse_options() -> Result<Option<Options>, String> {
         model,
         output,
         check,
+        prepare_cache,
         batch_size,
         sequence_length,
     }))

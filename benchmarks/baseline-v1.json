@@ -5951,6 +5951,6 @@
     "add_failed": 0,
     "add_uncertain": 0,
     "add_not_attempted": 0,
-    "owned_live_bytes_high_water": 13343
+    "owned_logical_bytes_high_water": 13343
   }
 }

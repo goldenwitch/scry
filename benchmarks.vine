@@ -129,7 +129,7 @@ Accept: normal builds have no benchmark state or public exports, each runtime co
 > The prior runtime operation-word counter design is superseded. Runtime seams collect only observations that belong to runtime boundaries: logical bytes, transactions, report/member cardinalities, and owned-live-byte regions.
 > Static operator identity, operation-family grouping, shape expansion, and nominal FLOP computation belong entirely to the Grimoire description/CostModel path. Instrumentation must not duplicate or reconcile that static graph.
 > Implemented as `scry`'s `benchmark-instrumentation` feature: normal builds compile no collector state, while benchmark builds collect private boundary observations and expose only `BenchmarkCollector`/`BenchmarkSnapshot` to the benchmark target.
-> Collector tests prove fresh reset, nested restoration, counter ownership, and visible overflow. The v1 run observed source bytes, spans, model calls/vectors, redb transactions, scan/result cardinalities, add outcomes, provenance lookups, and logical owned-live high-water.
+> Collector tests prove fresh reset, nested restoration, counter ownership, and visible overflow. The v1 run observed source bytes, spans, model calls/vectors, redb transactions, scan/result cardinalities, add outcomes, provenance lookups, and the high-water mark of selected logical owned buffers.
 ---
 [harness] Emit versioned benchmark artifacts (complete)
 Emit versioned benchmark artifacts containing the canonical Grimoire description and Grimoire-derived cost reports, plus separately labeled runtime resource data.
@@ -166,7 +166,7 @@ Accept: the baseline contains no wall-clock or runner-specific gate, can be recr
 > A Grimoire source revision or schema change is an identity change requiring explicit review. It is not a reason to rewrite the baseline automatically or compare unlike descriptions.
 > The first baseline artifact is generated at `benchmarks/baseline-v1.json` and records exact structural/static fields plus deterministic runtime observations. It remains in review until the artifact and CI change are committed together.
 > Generated v1 data: graph hash `828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35`, canonical description hash `6718baf31b789524c065790e2d2ad9d64b4f96c9ac0889fd66acc9c4705fe31b`, 1,244 ONNX nodes, 1,662 connections, 688,914,432 MACs, and 1,377,828,864 FMA FLOPs at `(B,S)=(1,32)`.
-> The same artifact records 10 sliced spans, 3 embedding calls, 3 writes, 4 reads, 3 add members with 2 upserts and 1 refusal, 3 search hits, 2 neighbours, 2 provenance lookups, and a 13,343-byte logical owned-live high-water. `--check` passes byte-for-byte after regeneration.
+> The same artifact records 10 sliced spans, 3 embedding calls, 3 writes, 4 reads, 3 add members with 2 upserts and 1 refusal, 3 search hits, 2 neighbours, 2 provenance lookups, and a 13,343-byte `owned_logical_bytes_high_water`. `--check` passes byte-for-byte after regeneration.
 ---
 [ci] Gate updates with the benchmark artifact (reviewing)
 Integrate benchmark collection and comparison into the existing CI workflow.
@@ -187,6 +187,8 @@ RSS, CPU utilization, or hardware-specific counters.
 -> grimoire-bridge
 > CI comparison must expose the canonical Grimoire description/cut diff, explicit axis/shape diff, CostReport diff, and separately labeled runtime-resource diff. A changed Grimoire source revision, schema/projection version, graph hash, cost-model version, or workload fingerprint is an identity failure until reviewed.
 > Implemented in `.github/workflows/ci.yml`: after the existing build/test/lint and cargo-deny checks, CI runs the benchmark package against `/tmp/scry-model-cache` with `--check benchmarks/baseline-v1.json`; the runner fails without overwriting the reference.
+> CI first runs `scry-benchmarks --prepare-cache` against `/tmp/scry-model-cache`. This is the explicit network-capable provisioning step; tests and the baseline comparison consume the verified five-file cache and do not rely on test ordering to populate it.
+> A clean-cache simulation passed in the CI order: prepare the empty cache, run all-feature workspace tests, then run the baseline `--check`; each returned success and the cache contained the five expected pinned assets.
 ---
 [docs] Document benchmark interpretation (complete)
 Document benchmark interpretation, Grimoire static descriptions, operation words, shape expansion, cost algebra, and baseline review.

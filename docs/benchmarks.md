@@ -7,7 +7,15 @@ machine executes scry faster than another.
 ## Command
 
 The runner is a separate workspace package and is not part of the public scry
-or MCP API. Required model assets must already be present in the cache:
+or MCP API. The cache can be prepared explicitly; this command is the only
+network-capable benchmark step:
+
+```text
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --prepare-cache
+```
+
+After preparation, the artifact command requires all five pinned files to be
+present at their expected byte sizes and performs no model download:
 
 ```text
 cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --output benchmarks/baseline-v1.json
@@ -20,7 +28,9 @@ cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-
 ```
 
 The cache path is an execution input only. No path, timestamp, process id, or
-runner property enters the artifact.
+runner property enters the artifact. CI prepares the cache before the test and
+comparison steps, so the benchmark gate does not depend on test ordering to
+populate its inputs.
 
 ## v1 identity
 
@@ -69,7 +79,8 @@ Runtime fields come from the feature-gated private scry collector and are
 reported separately from static cost. They include source bytes, sliced spans,
 embedding calls and returned vectors, redb read/write transactions, search scan
 cardinalities, returned passage bytes, add outcome cardinalities, provenance
-lookups, and the high-water mark of selected logical owned buffers.
+lookups, and the high-water mark of selected logical owned buffers, reported as
+`owned_logical_bytes_high_water`.
 
 These are logical boundary observations. They do not include filesystem
 allocation, network transfer rate, native ORT residency, allocator policy, or

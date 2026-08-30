@@ -29,7 +29,7 @@ mod active {
         add_failed: u64,
         add_uncertain: u64,
         add_not_attempted: u64,
-        owned_live_bytes_high_water: u64,
+        owned_logical_bytes_high_water: u64,
         overflowed: bool,
     }
 
@@ -156,8 +156,8 @@ mod active {
 
         /// Highest observed logical live-byte region.
         #[must_use]
-        pub const fn owned_live_bytes_high_water(&self) -> u64 {
-            self.owned_live_bytes_high_water
+        pub const fn owned_logical_bytes_high_water(&self) -> u64 {
+            self.owned_logical_bytes_high_water
         }
 
         /// Whether any counter could not be represented exactly.
@@ -336,11 +336,11 @@ mod active {
         });
     }
 
-    pub(super) fn owned_live_bytes(amount: usize) {
+    pub(super) fn owned_logical_bytes(amount: usize) {
         update(|snapshot| match u64::try_from(amount) {
             Ok(amount) => {
-                snapshot.owned_live_bytes_high_water =
-                    snapshot.owned_live_bytes_high_water.max(amount);
+                snapshot.owned_logical_bytes_high_water =
+                    snapshot.owned_logical_bytes_high_water.max(amount);
             }
             Err(_) => snapshot.overflowed = true,
         });
@@ -439,18 +439,18 @@ pub(crate) fn record_add_member(outcome: &str) {
 pub(crate) const fn record_add_member(_: &str) {}
 
 #[cfg(feature = "benchmark-instrumentation")]
-pub(crate) fn record_owned_live_bytes(amount: usize) {
-    active::owned_live_bytes(amount);
+pub(crate) fn record_owned_logical_bytes(amount: usize) {
+    active::owned_logical_bytes(amount);
 }
 
 #[cfg(not(feature = "benchmark-instrumentation"))]
-pub(crate) const fn record_owned_live_bytes(_: usize) {}
+pub(crate) const fn record_owned_logical_bytes(_: usize) {}
 
 #[cfg(all(test, feature = "benchmark-instrumentation"))]
 mod tests {
     use super::{
         Collector, record_add_member, record_embedding_call, record_embedding_vectors,
-        record_neighbour_passage, record_owned_live_bytes, record_provenance_lookup,
+        record_neighbour_passage, record_owned_logical_bytes, record_provenance_lookup,
         record_read_transaction, record_search_document, record_search_hit, record_sliced_spans,
         record_source_bytes, record_write_transaction,
     };
@@ -469,7 +469,7 @@ mod tests {
         record_neighbour_passage(4);
         record_provenance_lookup();
         record_add_member("upserted");
-        record_owned_live_bytes(99);
+        record_owned_logical_bytes(99);
         let snapshot = collector.finish();
 
         assert_eq!(snapshot.source_bytes(), 12);
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(snapshot.provenance_lookups(), 1);
         assert_eq!(snapshot.add_members(), 1);
         assert_eq!(snapshot.add_upserted(), 1);
-        assert_eq!(snapshot.owned_live_bytes_high_water(), 99);
+        assert_eq!(snapshot.owned_logical_bytes_high_water(), 99);
         assert!(!snapshot.overflowed());
     }
 

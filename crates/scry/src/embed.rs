@@ -174,7 +174,7 @@ impl Embed {
         crate::benchmark::record_embedding_call(input_bytes);
         let values = self.embedder.embed(texts, None).map_err(io::Error::other)?;
         crate::benchmark::record_embedding_vectors(values.len());
-        crate::benchmark::record_owned_live_bytes(input_bytes);
+        crate::benchmark::record_owned_logical_bytes(input_bytes);
         values
             .into_iter()
             .map(|values| self.embedding(values))

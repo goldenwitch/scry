@@ -110,7 +110,7 @@ impl Store {
         embeddings: &[Embedding],
     ) -> io::Result<PreparedRecord> {
         let bytes = record::encode(document, embeddings, &self.model)?;
-        crate::benchmark::record_owned_live_bytes(bytes.len());
+        crate::benchmark::record_owned_logical_bytes(bytes.len());
         Ok(PreparedRecord {
             key: document.origin().to_string(),
             bytes,

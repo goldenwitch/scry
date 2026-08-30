@@ -35,8 +35,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Prepare pinned model cache
+        run: cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --prepare-cache
+
       - name: Run tests
-        run: cargo test --workspace --all-targets --locked
+        run: cargo test --workspace --all-targets --all-features --locked
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
