@@ -93,6 +93,7 @@ impl Slice {
             start = end;
         }
         spans.push(span(text, start, text.len())?);
+        crate::benchmark::record_sliced_spans(spans.len());
         Ok(spans)
     }
 

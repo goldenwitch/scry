@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/scry", "crates/scry-mcp"]
+members = ["crates/scry", "crates/scry-mcp", "crates/scry-benchmarks"]
 resolver = "3"
 
 [workspace.package]

@@ -46,3 +46,4 @@ allow-wildcard-paths = false
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = ["https://github.com/goldenwitch/grimoire.git"]

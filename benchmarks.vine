@@ -1,0 +1,313 @@
+vine 1.2.0
+prefix: bench
+title: machine-agnostic CI benchmark baselines
+---
+[root] Establish machine-agnostic CI benchmark baselines (reviewing)
+The set-upsert implementation is committed. This graph plans the next
+validation instrument: unit benchmarks that report comparable work and
+resource measures, not elapsed time on one machine.
+Each node states the measurement question it owns, what its absence would cost,
+and the evidence that would settle it. Sibling nodes own disjoint metric or
+lifecycle boundaries and relate only through dependency edges.
+The benchmark system must preserve the repository principles: measure before
+judging, report data rather than rankings, keep bad states out of the artifact,
+and keep benchmark machinery outside the supported product surface.
+The accepted Grimoire source is now a merged but not-yet-published package;
+the source node records the immutable revision and policy needed before bridge
+implementation.
+-> checkpoint
+@guidance text/markdown docs/product-planning/architecture.md
+@guidance text/markdown docs/product-planning/lifecycle.md
+@guidance text/markdown README.md
+@guidance text/yaml .github/workflows/ci.yml
+---
+[contract] Define the benchmark contract (complete)
+Fix what a CI baseline is allowed to claim and how an update is reviewed.
+Serves: every workload and metric has one interpretation.
+Absent: a number can look precise while measuring a machine, a cache, or an
+unrecorded change in the input.
+Known by: a versioned artifact schema, units, identity fields, gate rules, and
+a baseline-update rule that a reviewer can apply without guessing.
+Do: distinguish exact work counts, logical resource budgets, and diagnostic
+environment observations; exclude elapsed time from regression gates; bind a
+measurement to code/model/workload revisions; define how intentional changes
+replace a baseline.
+Accept: one contract rejects machine-specific performance claims and leaves no
+semantic choice for workload, metric, harness, or CI nodes.
+> The benchmark is a validation instrument, not a speed ranking. A gated field must be derivable from pinned code/model/workload inputs and expressed in a stable unit; elapsed time, CPU frequency, utilization, scheduler behavior, raw RSS, and hardware performance counters are diagnostic only.
+> The artifact identity needs schema version, workload id and input fingerprint, model name and pinned revision, metric name/unit/basis, and collection boundary. Code revision and runner metadata may be retained for provenance but are not comparison keys or pass/fail inputs.
+> Exact equality is the default for deterministic counts and bytes. A budget or tolerance is allowed only when the owning metric node demonstrates an irreducible source of variation and records it; no blanket percentage threshold is introduced.
+> A baseline update is a deliberate data change reviewed with the implementation or model/workload change that explains it. A schema, model, or workload identity mismatch fails loudly instead of silently regenerating the reference.
+> The benchmark runner and artifacts remain validation/build machinery, not supported scry or MCP API. The current CI workflow is the integration target, but no CI edit or benchmark value is part of this planning node.
+> Grimoire PR #1 is merged on `main` at `bd9920bc1ae79d40383fedcacea3adb87fd98109`; no release tag or crates.io publication is available yet, so the benchmark source must be pinned independently of the registry.
+---
+[workloads] Fix deterministic unit workloads (complete)
+Choose deterministic unit workloads and fixed tensor shapes whose measures will form the Grimoire-backed baseline matrix.
+Serves: CI compares the same static description, explicit axes, cost reports, and runtime-owned resource work after an implementation update.
+Absent: changes in corpus size, tensor shape, graph topology, model bytes, randomness, network state, or filesystem paths are confused with implementation changes.
+Known by: named workloads with fixed bytes, token targets, padded batch shapes, static Grimoire graph identity, set sizes, report sizes, model revision, and expected structural outputs.
+Do: cover the owned library boundaries that matter to update validation: origin normalization, slicing, passage embedding, add orchestration, record encoding/decoding, search over a fixed corpus, and handle/report mapping where useful. Use in-memory or reserved non-network material, fixed seeds, and no current time or absolute temporary paths in measured identities. For model calls, record rectangular ONNX batch size B and padded sequence length S and preserve the generated Grimoire description rather than reducing it to a word-count table.
+Accept: each case has a stable workload id and input fingerprint; its token, chunk, member, output, Grimoire element/group, and tensor-shape cardinalities are explicit; no case requires network or an ambient corpus.
+-> contract
+-> grimoire
+-> operations
+> A workload's model component is the canonical serialized Grimoire description plus graph/config hashes and explicit axis bindings. Structural group membership may be counted for sanity, but FLOPs are obtained by evaluating cost expressions over addressed elements and shapes.
+> Variable-length model calls are excluded from gated static cost cases because fastembed pads each batch to a rectangular [B,S] input. B and S are workload identity, and S is the padded encoded length rather than the sum of source token lengths.
+> The first bridge fixture uses the pinned BGE graph and should retain at least one opaque operation such as Erf or Sqrt and one shape-aware MatMul. A graph topology or unsupported-shape change fails identity/cost validation rather than being absorbed into a tolerance.
+---
+[metrics] Define the machine-agnostic metric vocabulary (complete)
+Define the machine-agnostic metric vocabulary, Grimoire static representations, cost projections, and runtime-owned resource units in which derived values are compared.
+Serves: baseline diffs compare like with like.
+Absent: RAM, FLOPs, bytes, and counts collapse into an ambiguous performance score.
+Known by: a metric table with exactness, unit, collection boundary, and whether the value gates CI or is diagnostic only.
+Do: distinguish the canonical serialized Grimoire description from runtime resource observations and from Grimoire CostModel-derived metric vectors; define explicit operation/group/cardinality facts, tensor extents, model invocation counts, nominal cost projections, requested allocation/live-byte measures, source and record byte counts, transaction counts, and artifact cardinalities. Keep computed FLOPs distinct from sourced measurement values, hardware instructions, and elapsed time.
+Accept: every emitted field has one owner, one Grimoire/static or runtime basis, one cost-model version where derived, and one comparison rule; no gated metric depends on CPU frequency, scheduler behavior, OS RSS policy, or runner wall-clock speed.
+-> contract
+-> grimoire
+-> operations
+> Metric lineage is now `Grimoire description -> explicit shape/axis bindings -> Grimoire CostModel/CostReport projection` for static work, and `owned runtime boundary -> private resource counter` for bytes/transactions/live bytes. These are different evidence paths and remain separately named in the artifact.
+> A derived metric may be recomputed from the serialized description and cost expression assignments. The static description is the auditable source for operation words; no runtime operation-occurrence event is needed for FLOP validation.
+---
+[memory] Resolve the stable memory measure (complete)
+Choose what CI means by RAM usage without pretending RSS is portable.
+Serves: memory regressions have a reproducible baseline.
+Absent: a memory number is either machine noise or silently omits the model and
+native runtime allocations.
+Known by: a measured definition of peak logical bytes and/or requested
+allocation high-water, its included ownership, and an explicit treatment of
+native model memory and raw RSS.
+Do: test the allocator and ownership instrumentation against fixed workloads;
+separate scry-owned data structures from pinned model assets and native runtime
+state; state which value is a CI gate and which values are diagnostic.
+Accept: the chosen gate is machine-agnostic under the stated workload, can be
+collected without a public API change, and cannot be mistaken for process RSS.
+-> metrics
+-> workloads
+> Memory observations follow the operation vocabulary but are not cost weights: operation events may delimit owned-live-byte measurement regions, while raw RSS and native runtime residency remain diagnostic. No operation word receives a fabricated RAM price in the gated baseline.
+---
+[compute] Resolve the stable compute measure (complete)
+Compile and validate the pinned raw model graph as a Grimoire static description with explicit shapes and axes.
+Serves: the static representation has verified topology and shape rules before Grimoire cost projections are evaluated.
+Absent: a FLOP expression can look exact while silently omitting a node, counting a fused runtime graph, or using the wrong padded input shape.
+Known by: graph hash, canonical Grimoire serialization, element/group topology, operator-word facts, shape propagation rules, and a repeatable analyzer that rejects topology or unsupported-shape changes.
+Do: parse the pinned ONNX graph offline; generate the Grimoire description and operation groups; verify weighted and attention MatMul shapes for `(B,S)`; keep raw graph analysis, Grimoire validation, cost projection, and runtime optimization as separate boundaries.
+Accept: the generated description round-trips canonically, reproduces the pinned structural fixture, records model/config identity, and supplies explicit addressed shapes/axes to cost-model-v1 without loading or timing the runtime graph.
+-> grimoire
+-> metrics
+-> operations
+-> workloads
+> The earlier raw node census remains a structural acceptance fixture only. It is not an observed FLOP measurement and is not the primary artifact layer; the canonical static artifact is the validated Grimoire description.
+> The generated description must distinguish model graph topology from runtime ORT Level3 optimization. ORT's optimized graph and provider execution are diagnostics and cannot replace the raw Grimoire input.
+> The bridge must fail if a model node lacks an address, operator identity, required port/connection representation, or a shape needed by a selected cost projection. It must not silently infer missing extents from operator names.
+---
+[io] Count deterministic data movement (complete)
+Measure source, corpus, and serialization work without measuring device speed.
+Serves: storage and ingestion regressions have a machine-independent signal.
+Absent: a change can move more bytes, open more transactions, or refetch more
+material while a time benchmark happens to stay flat.
+Known by: exact counts for input bytes, output/record bytes, spans,
+embeddings, transactions, and fetch/member attempts at each owned boundary.
+Do: identify counters that can be collected from private seams and fixed
+fixtures; separate logical bytes from filesystem allocation and network
+transfer; include empty, singleton, and multi-member set cases.
+Accept: counters are deterministic for one workload and do not require an
+ambient filesystem, network service, or OS-specific allocation report.
+-> metrics
+-> workloads
+> Planning decision complete: logical byte and operation counters are the gate. Filesystem allocation, network transfer rate, cache behavior, device latency, and other machine-specific observations are excluded from pass/fail.
+---
+[instrumentation] Build private runtime resource seams (complete)
+Implement private runtime resource measurement seams that remain separate from Grimoire static cost analysis.
+Serves: workloads emit owned byte, transaction, and live-resource measures at the boundary that owns them.
+Absent: benchmark code duplicates production logic or mistakes runtime observations for static graph cost.
+Known by: focused unit tests prove counters reset, compose across one workload, and cannot alter ordinary product behavior when benchmarks are disabled.
+Do: place private sinks/test-only hooks beside fetch, slice, embed, add, store, and MCP boundaries only for runtime-owned logical bytes, transactions, member/report cardinalities, and owned-live-byte regions; do not emit FLOP occurrence counters or a second operation vocabulary; leave static operation identity and nominal cost to the Grimoire bridge.
+Accept: normal builds have no benchmark state or public exports, each runtime counter has one owner and test-only collection path, and no runtime observation is used to derive gated FLOPs.
+-> io
+-> memory
+-> workloads
+> The prior runtime operation-word counter design is superseded. Runtime seams collect only observations that belong to runtime boundaries: logical bytes, transactions, report/member cardinalities, and owned-live-byte regions.
+> Static operator identity, operation-family grouping, shape expansion, and nominal FLOP computation belong entirely to the Grimoire description/CostModel path. Instrumentation must not duplicate or reconcile that static graph.
+> Implemented as `scry`'s `benchmark-instrumentation` feature: normal builds compile no collector state, while benchmark builds collect private boundary observations and expose only `BenchmarkCollector`/`BenchmarkSnapshot` to the benchmark target.
+> Collector tests prove fresh reset, nested restoration, counter ownership, and visible overflow. The v1 run observed source bytes, spans, model calls/vectors, redb transactions, scan/result cardinalities, add outcomes, provenance lookups, and logical owned-live high-water.
+---
+[harness] Emit versioned benchmark artifacts (complete)
+Emit versioned benchmark artifacts containing the canonical Grimoire description and Grimoire-derived cost reports, plus separately labeled runtime resource data.
+Serves: CI can collect and parse the same static cost analysis and owned resource measures on every update.
+Absent: baselines live in terminal prose, depend on benchmark-framework timing, or lose the graph facts behind a scalar.
+Known by: one deterministic JSON/JSONL artifact with Grimoire/schema/model/graph/workload identity, canonical description, explicit axis bindings, operation/group facts, cost-model version, derived reports, and no timestamps or machine-specific values in gated fields.
+Do: use a benchmark-side runner that can reach the private runtime seams where needed; serialize the validated Grimoire description as the static source artifact; evaluate named Grimoire CostModels; emit runtime counters separately; do not make elapsed time the primary output. Make malformed, incomplete, unknown-word, unsupported-shape, invalid-Grimoire, and identity-mismatched artifacts fail loudly.
+Accept: a clean checkout can emit an artifact offline after required assets are present, the static description and cost reports round-trip/validate, derived values are recomputable, and the runner has no public product API or hidden ambient corpus state.
+-> contract
+-> cost-model
+-> grimoire
+-> grimoire-bridge
+-> instrumentation
+-> metrics
+-> operations
+-> workloads
+> The artifact's primary source layer is a canonical Grimoire description or serialized cut, not an operation-counter table. It carries the Grimoire core/projection/schema versions and exact source revision used by the bridge.
+> Derived reports retain the expression/model identity and named unit. If the current Grimoire text grammar cannot serialize symbolic cost expressions, the runner stores the expression assignments in a separate versioned benchmark artifact section rather than inventing projection syntax.
+> The artifact records the exact Grimoire Git URL and revision while the benchmark source is Git-based; moving to a published package is a reviewed identity change, not an automatic dependency refresh.
+> Implemented as `benchmarks/baseline-v1.json`, emitted by `scry-benchmarks` with canonical JSON ordering. `--check` regenerates in memory and reports the first differing line without overwriting the baseline.
+---
+[baseline] Establish committed baselines and update discipline (reviewing)
+Establish committed Grimoire static-description and cost-report baselines with update discipline.
+Serves: future updates have a concrete validation target for graph structure, shapes, assumptions, and runtime-owned resources.
+Absent: every update redefines its own reference and a changed graph or weighting disappears into a moving scalar expectation.
+Known by: a committed baseline artifact with canonical Grimoire description/cut, graph and workload identity, explicit axes, named cost-model reports, exact or budget comparison rules, and separately labeled diagnostics.
+Do: collect values from the fixed workload matrix, review Grimoire addresses/groups, shapes, operator facts, units, graph/model/workload/cost-model versions, classify any non-exact runtime metric, and store only reproducible fields. Make baseline changes visible as data diffs and require the implementation, model, graph, or cost-model change that explains them.
+Accept: the baseline contains no wall-clock or runner-specific gate, can be recreated from pinned inputs, and fails loudly when the Grimoire description, schema, operation representation, cost model, graph, or model identity changes unexpectedly.
+-> cost-model
+-> grimoire-bridge
+-> harness
+-> operations
+> Compare canonical Grimoire structure, operator/group membership, and shape rows before comparing CostReports. A changed `Erf` group or `MatMul` shape is meaningful even if a later cost-model projection happens to preserve a total.
+> A Grimoire source revision or schema change is an identity change requiring explicit review. It is not a reason to rewrite the baseline automatically or compare unlike descriptions.
+> The first baseline artifact is generated at `benchmarks/baseline-v1.json` and records exact structural/static fields plus deterministic runtime observations. It remains in review until the artifact and CI change are committed together.
+> Generated v1 data: graph hash `828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35`, canonical description hash `6718baf31b789524c065790e2d2ad9d64b4f96c9ac0889fd66acc9c4705fe31b`, 1,244 ONNX nodes, 1,662 connections, 688,914,432 MACs, and 1,377,828,864 FMA FLOPs at `(B,S)=(1,32)`.
+> The same artifact records 10 sliced spans, 3 embedding calls, 3 writes, 4 reads, 3 add members with 2 upserts and 1 refusal, 3 search hits, 2 neighbours, 2 provenance lookups, and a 13,343-byte logical owned-live high-water. `--check` passes byte-for-byte after regeneration.
+---
+[ci] Gate updates with the benchmark artifact (reviewing)
+Integrate benchmark collection and comparison into the existing CI workflow.
+Serves: benchmark baselines participate in every future validation run.
+Absent: the instrument exists locally but cannot protect updates.
+Known by: a CI step that runs the fixed command, compares the committed
+baseline, publishes useful artifact data, and remains independent of runner
+speed for its pass/fail decision.
+Do: extend the current GitHub Actions check only after the artifact and update
+rule are stable; preserve the existing model-cache behavior; make asset or
+schema failures fatal and keep timeouts as operational safeguards rather than
+performance metrics.
+Accept: a pull request with changed gated metrics fails with a diff, an
+intentional baseline update is reviewable, and no CI decision uses elapsed time,
+RSS, CPU utilization, or hardware-specific counters.
+-> baseline
+-> cost-model
+-> grimoire-bridge
+> CI comparison must expose the canonical Grimoire description/cut diff, explicit axis/shape diff, CostReport diff, and separately labeled runtime-resource diff. A changed Grimoire source revision, schema/projection version, graph hash, cost-model version, or workload fingerprint is an identity failure until reviewed.
+> Implemented in `.github/workflows/ci.yml`: after the existing build/test/lint and cargo-deny checks, CI runs the benchmark package against `/tmp/scry-model-cache` with `--check benchmarks/baseline-v1.json`; the runner fails without overwriting the reference.
+---
+[docs] Document benchmark interpretation (complete)
+Document benchmark interpretation, Grimoire static descriptions, operation words, shape expansion, cost algebra, and baseline review.
+Serves: the numbers remain evidence rather than unexplained authority.
+Absent: a future maintainer cannot tell a graph change from a changed workload, unit, cost expression, or runtime observation.
+Known by: a concise repository document naming the command, artifact schema, Grimoire/source revisions, operation representation, metric bases, workload identities, cost-model versions, exclusions, and baseline update process.
+Do: document exact versus diagnostic fields, the distinction between addressed static structure and runtime measurements, operation words and units, shape-expanded counts, Grimoire CostExpression/CostModel boundaries, memory and FLOP exclusions, model/cache prerequisites, clean-checkout conditions, and the rule that baseline updates carry their cause in the same change.
+Accept: the document agrees with the artifact schema and CI behavior and does not describe machine-local timing, sourced measurement/1 values, or a weighted scalar as a product property.
+-> baseline
+-> contract
+-> cost-model
+-> grimoire
+-> grimoire-bridge
+-> operations
+> Create a repository benchmark document that defines the command, artifact schema, workload ids, metric bases, memory/FLOP exclusions, model/cache prerequisites, exact-versus-diagnostic fields, and deliberate baseline update process.
+> The documentation must state that these are algorithmic work/resource baselines, not claims about machine speed. It must explain why raw RAM/RSS, FLOP/s, elapsed time, and hardware counters are not gates and where diagnostic evidence may be found.
+> Keep benchmark interpretation separate from product behavior documentation. Link the benchmark document from the CI or maintainer-facing entry point only after the artifact and command exist; do not make the README promise numbers that planning has not measured.
+> Implemented in `docs/benchmarks.md` and linked from `README.md`; it names the v1 command, identity, Grimoire source, static cost lineage, runtime boundaries, exclusions, and baseline update rule.
+---
+[checkpoint] Validate the benchmark system (reviewing)
+Review the complete Grimoire-backed static cost and benchmark system before it becomes an update gate.
+Serves: future implementation changes are judged against a stable, understood description and cost report.
+Absent: a benchmark command can pass while measuring the wrong graph, applying the wrong expressions, or silently dropping a node/shape.
+Known by: clean-checkout evidence, a committed canonical Grimoire artifact diff, and validation that contract, Grimoire boundary, operation representation, graph bridge, cost models, workloads, runtime resource seams, runner, baseline, CI, and documentation agree.
+Do: verify static addressed structure, operator/group facts, shape/axis extents, named CostReports, runtime-resource basis, identity/version fields, and gate/diagnostic classification together.
+Accept: no gated wall-clock/RSS/hardware fields exist; invalid Grimoire, unknown operators, unsupported shapes, malformed artifacts, missing cost assignments, and identity mismatches fail loudly; every gated static cost is recomputable from the canonical description and named cost algebra.
+-> baseline
+-> ci
+-> compute
+-> contract
+-> cost-model
+-> docs
+-> grimoire
+-> grimoire-bridge
+-> harness
+-> instrumentation
+-> io
+-> memory
+-> metrics
+-> operations
+-> workloads
+> The checkpoint now treats the canonical Grimoire description as the primary evidence layer, CostReports as derived projections, and runtime counters as separate observations. A passing scalar cost cannot compensate for a changed or incomplete addressed graph.
+> The v1 implementation gate passes locally: format check, strict Clippy, workspace tests, benchmark-feature collector tests, docs, cargo-deny, and the exact baseline `--check` command. The benchmark crate is `publish = false`; only committing the reviewed artifact/CI change and observing the first remote CI run remain outside this execution.
+> Acceptance must include a generated description containing at least one opaque operation word such as `Erf` or `Sqrt`, one shape-aware `MatMul` expression, canonical serialization/validation, and a deliberate unknown/unpriced operation failure.
+---
+[operations] Represent operation words in Grimoire (complete)
+Represent operation identity and structural grouping through the Grimoire static description rather than a hand-maintained runtime occurrence counter.
+Serves: the operation vocabulary is addressable, serializable, and auditable before cost is applied.
+Absent: a local counter table can hide graph topology changes and cannot preserve per-node shape or provenance.
+Known by: every model operation has one addressed structural element, an explicit operator word, a shape basis where known, and a group relation for aggregation.
+Do: use Grimoire addressed blocks and groups for operation instances and families; carry raw operator identity, domain/opset/dtype, node address, tensor ports, and shape/axis facts; derive family cardinalities from group membership and let unsupported words fail at the cost boundary.
+Accept: no FLOP value is collected by runtime observation, no operation is silently placed in `other`, and canonical Grimoire serialization preserves the complete operation structure.
+-> contract
+-> grimoire
+> The earlier hand-authored `operation-vocabulary-v1` occurrence census is superseded as the source of truth. The operation words now live in the generated Grimoire description as structural operator values and addressed group membership; any aggregate count is a derived structural query.
+> The measured 19-word ONNX census remains a fixture expectation for the first bridge, not a runtime metric: Add 172, Cast 1, Concat 48, Constant 285, Div 49, Erf 12, Gather 100, MatMul 96, Mul 50, Pow 25, ReduceMean 50, Reshape 48, Shape 97, Slice 1, Softmax 12, Sqrt 25, Sub 26, Transpose 48, Unsqueeze 99. The generated description must reproduce these structural facts or fail.
+> A model node address is structural identity within one generated description; operator word is semantic grouping data; shape basis is the input to cost algebra. Exporter node names may be diagnostic and must not be the only identity source.
+> The bridge may preserve an operator that has no cost row, but a gated cost projection must reject an unpriced/unsupported word rather than silently dropping it or assigning it to an opaque scalar bucket.
+---
+[cost-model] Apply Grimoire cost algebra (complete)
+Apply Grimoire's checked symbolic cost algebra to the validated static operation description.
+Serves: FLOPs and other nominal work values are computed from explicit addressed elements, groups, axes, and shape expressions.
+Absent: arbitrary per-occurrence weights and opaque scalar totals hide which graph and shape facts produced a value.
+Known by: named Grimoire CostExpression assignments, explicit axes, CostModel evaluations, CostReport group totals, and fail-visible handling of missing prices, unsupported words, and overflow.
+Do: use Grimoire constant/axis/sum/product expressions over generated operation blocks; assign per-node expressions and aggregate operation-family/group totals; run one named CostModel per derived unit where the current Grimoire API is scalar; retain opaque operations as counts without invented FLOP prices.
+Accept: every gated derived value is recomputable from the serialized Grimoire description and named cost model; shape-aware MatMul produces MAC/FMA_FLOP projections; Erf/Sqrt/Softmax remain explicit unpriced operation facts; no runtime observation or hardware counter enters the FLOP result.
+-> contract
+-> grimoire
+-> metrics
+-> operations
+> The assumption matrix is now authored as Grimoire CostExpression assignments, not a Scry-side occurrence multiplier table. `CostExpression::axis`, `sum`, and `product` provide checked symbolic arithmetic over explicit positive axis bindings; `CostReport::group_total` supplies structural aggregation and rejects missing/unpriced leaves, duplicate members, cycles, unknown elements, and overflow.
+> For the pinned transformer, the first named projection remains `MatMul(B,M,K,N) -> MACs = B*M*K*N` and `FMA_FLOPs = 2*B*M*K*N`; the verified aggregate for rectangular `(B,S)` is `B * (42,467,328*S + 18,432*S^2)` FMA_FLOPs. The formula is a consequence of generated addressed nodes and expressions, not a hard-coded runtime observation.
+> Use separate named reports for `macs`, `fma_flops`, scalar element operations, logical bytes, or other units until Grimoire has a demonstrated need for a vector-cost API. A scalar weighted score is not introduced.
+> Grimoire's cost layer intentionally leaves FLOP, byte, sparsity, precision, and hardware conventions caller-authored. Scry's cost-model-v1 names only the projections it can defend and records every other operation word without assigning it a fake price.
+> The first implementation must not try to derive CostExpression assignments from a runtime trace. It builds them from the validated static Grimoire description and explicit shape/axis inputs; a changed source graph or expression row is visible in the artifact.
+---
+[grimoire] Adopt Grimoire as the static cost boundary (complete)
+Choose how Grimoire supplies the canonical static representation for benchmark cost analysis.
+Serves: FLOPs and other symbolic work are computed from an addressable validated graph rather than observed through brittle runtime occurrence counters.
+Absent: a hand-maintained operation enum or counter map can drift from the model graph while still producing plausible totals.
+Known by: a boundary contract separating Grimoire descriptions, schemas, projections, sourced measurements, and runtime observations.
+Do: use Grimoire's description/core graph as the static representation; map model nodes to addressed blocks, tensor values to ports and connections, and operation families to addressed groups; use explicit shape/axis facts and host-side cost algebra; keep the product library and MCP surface independent of benchmark machinery.
+Accept: the boundary preserves graph identity, operator identity, shape extents, group membership, canonical serialization, and fail-visible validation without treating computed cost as a sourced measurement or adding runtime semantics.
+-> contract
+> Deep review of Grimoire at clean commit 7cb951ab8e75ae1b33555a0ec3bf2de7f1a85e39: its static description has addressed blocks, ports, connections, groups, layers, schemas, canonical serialization, and validated cuts; its prototype CostExpression/CostModel/CostReport provides checked constant/axis/sum/product arithmetic and addressed group aggregation. Grimoire's full 130-test executable suite and strict clippy pass at this revision.
+> Grimoire is the representation and symbolic-analysis boundary, not a runtime observer. An ONNX node becomes an addressed block; inputs and outputs become ports; tensor flow becomes connections; operation-family groups are structural groups. Group cardinality is derived from the static description, not measured from execution.
+> Use the existing architecture/1 operator text and shapes/1 port values initially rather than adding a new Grimoire core element kind. A dedicated operation schema is a later extension only if a concrete fixture proves free operator text cannot carry the required validation; unknown raw operator names remain visible and unsupported cost projections fail loudly.
+> Do not use Grimoire measurement/1 for computed FLOPs. That schema is for sourced literal observations with value, unit, and source; symbolic cost belongs to host-side cost algebra. Raw RSS, actual runtime FLOPs, and optimized-graph execution remain separate diagnostics.
+> Grimoire PR #1 is merged and release-ready at source revision `bd9920bc1ae79d40383fedcacea3adb87fd98109`, with package version `1.0.0`; it has no release tag and is not published to crates.io. Scry must not depend on `../grimoire` in CI or in the product library; the benchmark-only source node now owns the immutable Git pin and cargo-deny policy.
+> Current CostModel returns one checked u64 report per model. The first bridge may run separate named models/reports for MACs, FMA_FLOPs, bytes, or other projections; a vector-cost extension is deferred until repeated use proves necessary.
+---
+[grimoire-source] Establish a reproducible Grimoire source (complete)
+Choose how the benchmark bridge obtains Grimoire in a clean checkout and CI.
+Serves: the static analysis can be reproduced outside the developer's sibling-repository layout.
+Absent: a local `../grimoire` path works only on one machine, while an unpinned Git dependency can change the cost semantics underneath a baseline.
+Known by: a source URI, immutable revision or released version, package/license metadata, cargo-deny policy, and a clean-checkout resolution check.
+Do: add the benchmark-only dependency on the verified Grimoire Git revision, record the exact URL and revision in `Cargo.lock` and benchmark identity, allow only that repository in `deny.toml`, and keep Grimoire out of the scry runtime product dependencies.
+Accept: a fresh checkout resolves the selected package with `cargo metadata --locked` and cargo-deny without a sibling checkout or registry ambiguity; the exact Grimoire revision, package version, and license boundary are recorded; and no unpublished or personal local path is required.
+-> grimoire
+> Audit result at Grimoire commit 7cb951ab8e75ae1b33555a0ec3bf2de7f1a85e39: the current tracked tree contains no email addresses, local-user paths, secret-like values, or sensitive-looking filenames. The ignored local scry.redb is 269 MB and target/ is ignored; neither is tracked.
+> The earlier audit identified `.vscode/mcp.json` as a sibling-checkout publication hazard; merged PR #1 removed it and added the package README, license, and archive checks. A release tag and crates.io publication remain absent.
+> The reachable Git history uses the author identity Autumn Wyborny <autumnwyborny@witchfolio.com> on its commits. This is a human publication gate: keep it if the user accepts that public history identity, or rewrite history with explicit approval before pushing. No history rewrite or push is performed here.
+> The reviewed PR head passed repository tests, strict Clippy, package creation, and the complete extracted-package test suite. The merged commit is stable enough to pin immutably while publication remains the cleaner long-term boundary.
+> The first source is `grimoire = { git = "https://github.com/goldenwitch/grimoire.git", rev = "bd9920bc1ae79d40383fedcacea3adb87fd98109", package = "grimoire" }` in benchmark-only tooling.
+> A clean scratch Cargo manifest resolved that revision as package `grimoire` version `1.0.0`; crates.io currently exposes an unrelated historical `grimoire` `0.2.1`, so `grimoire = "1.0.0"` is not a valid current source choice.
+> Scry's current `deny.toml` denies unknown Git sources; the source implementation must add an explicit allow-list entry for the Grimoire repository in the same change as the benchmark dependency.
+> The source node owns the clean-checkout `cargo metadata --locked` and cargo-deny checks. It does not add Grimoire to `crates/scry` or `crates/scry-mcp`.
+> When a published Grimoire package and immutable release identity exist, migration is a deliberate source and benchmark-identity change with a fresh bridge comparison.
+> Implemented in the workspace benchmark member: `Cargo.lock` records the exact Git revision, `deny.toml` allows only the Grimoire repository, `cargo metadata --locked` resolves `grimoire 1.0.0`, and `cargo deny check` passes.
+---
+[grimoire-bridge] Compile ONNX into a Grimoire description (complete)
+Translate the pinned raw ONNX graph into a validated, canonical Grimoire static description for cost analysis.
+Serves: the benchmark's source of truth is an addressable graph, not a runtime occurrence table.
+Absent: operation counts and cost expressions can silently drift from graph topology, tensor connections, or shape extents.
+Known by: a canonical description containing addressed operation blocks, tensor ports/connections, operation-family groups, explicit shape/axis facts, graph identity, and a round-trip validation result.
+Do: parse the raw ONNX protobuf; give every node a deterministic address; preserve raw operator identity; represent graph inputs/outputs and tensor fan-out structurally; attach existing Grimoire architecture/operator and shape values; generate operation groups; fail on missing identity, unsupported shape, unknown source schema, or dropped node; keep raw graph, Grimoire validation, and cost projection as separate boundaries.
+Accept: the generated description parses, validates, serializes canonically, reproduces the pinned structural fixture, and supplies the addressed elements and explicit axes needed by Grimoire CostModel without loading or timing the optimized runtime graph.
+-> compute
+-> grimoire-source
+-> operations
+-> workloads
+> The bridge consumes the source node's exact package revision and carries that source identity into the generated artifact; source resolution is not delegated to the runtime crates or an ambient sibling checkout.
+> Implemented in `crates/scry-benchmarks`: the cached model parses to 1,244 ONNX nodes and 19 operator families, generates 1,446 addressed blocks and 1,662 connections, round-trips through Grimoire canonical serialization, and evaluates the 96-member MatMul group.
+> At the v1 binding `(B,S)=(1,32)`, the generated MAC report is `688,914,432` and the FMA-FLOP report is `1,377,828,864`; the latter agrees with `B * (42,467,328*S + 18,432*S^2)`.

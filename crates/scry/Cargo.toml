@@ -7,6 +7,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+benchmark-instrumentation = []
+
 # The three named in architecture.md, and nothing a later node has not asked
 # for yet. fastembed's defaults reach for the platform's TLS, for image models,
 # and for hf-hub; all three are dropped, so the tree stays pure Rust, carries no

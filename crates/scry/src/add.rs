@@ -146,6 +146,13 @@ fn orchestrate(
         } else {
             process(origin)
         };
+        crate::benchmark::record_add_member(match &outcome {
+            AddOutcome::Upserted => "upserted",
+            AddOutcome::Refused(_) => "refused",
+            AddOutcome::Failed(_) => "failed",
+            AddOutcome::Uncertain(_) => "uncertain",
+            AddOutcome::NotAttempted => "not-attempted",
+        });
         halted |= matches!(&outcome, AddOutcome::Failed(_) | AddOutcome::Uncertain(_));
         items.push(AddResult {
             origin: origin.clone(),

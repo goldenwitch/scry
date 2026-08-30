@@ -340,6 +340,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "grimoire"
+version = "1.0.0"
+source = "git+https://github.com/goldenwitch/grimoire.git?rev=bd9920bc1ae79d40383fedcacea3adb87fd98109#bd9920bc1ae79d40383fedcacea3adb87fd98109"
+
+[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -871,6 +876,17 @@ dependencies = [
  "redb",
  "tokenizers",
  "ureq",
+]
+
+[[package]]
+name = "scry-benchmarks"
+version = "0.1.0"
+dependencies = [
+ "grimoire",
+ "hmac-sha256",
+ "scry",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

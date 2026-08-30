@@ -28,6 +28,7 @@ impl SearchVerb for Store {
         // the vector grows to what the corpus actually held.
         let mut hits: Vec<Hit> = Vec::new();
         self.scan(|document, embeddings| {
+            crate::benchmark::record_search_document(document.spans().len());
             for (span, embedding) in document.spans().iter().zip(&embeddings) {
                 // Everything the store hands back names the model it was
                 // opened with, so this is the query's model or nothing. The
@@ -55,6 +56,9 @@ impl SearchVerb for Store {
             }
             Ok(())
         })?;
+        for hit in &hits {
+            crate::benchmark::record_search_hit(hit.passage().text().as_str().len());
+        }
         Ok(hits)
     }
 }

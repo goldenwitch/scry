@@ -73,6 +73,7 @@ fn read(origin: &Origin, cap: u64, timeout: Duration) -> Result<(Text, SystemTim
     let Some(text) = Text::from_utf8(bytes) else {
         return Err(AddRefusal::NotText(origin.clone()));
     };
+    crate::benchmark::record_source_bytes(text.as_str().len());
     Ok((text, fetched_at))
 }
 

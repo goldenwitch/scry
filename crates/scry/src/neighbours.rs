@@ -44,6 +44,7 @@ impl NeighboursVerb for Store {
             let passage = Handle::mint(&document, span).ok_or_else(|| {
                 io::Error::other("a span of the document is not one it was cut into")
             })?;
+            crate::benchmark::record_neighbour_passage(passage.text().as_str().len());
             passages.push(passage);
         }
         Ok(Ok(passages))

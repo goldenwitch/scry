@@ -89,7 +89,9 @@ impl Provenance {
 impl ProvenanceVerb for Store {
     fn provenance(&self, handle: &Handle) -> io::Result<Result<Provenance, HandleRefusal>> {
         let origin = handle.chunk().origin();
-        let Some(document) = self.document(origin)? else {
+        let document = self.document(origin)?;
+        crate::benchmark::record_provenance_lookup();
+        let Some(document) = document else {
             return Ok(Err(HandleRefusal::Gone(origin.clone())));
         };
         if handle.verify(&document).is_none() {

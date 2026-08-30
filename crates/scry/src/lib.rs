@@ -68,6 +68,7 @@
 //! hashed.
 
 mod add;
+mod benchmark;
 mod chunk;
 mod count;
 mod delete;
@@ -105,6 +106,8 @@ mod vector;
 mod window;
 
 pub use crate::add::{AddOutcome, AddReport, AddResult};
+#[cfg(feature = "benchmark-instrumentation")]
+pub use crate::benchmark::{Collector as BenchmarkCollector, Snapshot as BenchmarkSnapshot};
 pub use crate::chunk::Chunk;
 pub use crate::count::Count;
 pub use crate::digest::Digest;

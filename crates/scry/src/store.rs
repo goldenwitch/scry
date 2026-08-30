@@ -109,15 +109,18 @@ impl Store {
         document: &Document,
         embeddings: &[Embedding],
     ) -> io::Result<PreparedRecord> {
+        let bytes = record::encode(document, embeddings, &self.model)?;
+        crate::benchmark::record_owned_live_bytes(bytes.len());
         Ok(PreparedRecord {
             key: document.origin().to_string(),
-            bytes: record::encode(document, embeddings, &self.model)?,
+            bytes,
         })
     }
 
     /// Commits one prepared replacement in one redb write transaction.
     pub(crate) fn commit_replace(&self, prepared: &PreparedRecord) -> io::Result<()> {
         let write = self.database.begin_write().map_err(io::Error::other)?;
+        crate::benchmark::record_write_transaction();
         #[cfg(test)]
         if self.fail_next_commit.swap(false, Ordering::Relaxed) {
             return Err(io::Error::other("synthetic store write failure"));
@@ -159,6 +162,7 @@ impl Store {
     pub(crate) fn remove(&self, origin: &Origin) -> io::Result<()> {
         let key = origin.to_string();
         let write = self.database.begin_write().map_err(io::Error::other)?;
+        crate::benchmark::record_write_transaction();
         {
             let mut documents = write.open_table(DOCUMENTS).map_err(io::Error::other)?;
             documents.remove(key.as_str()).map_err(io::Error::other)?;
@@ -178,6 +182,7 @@ impl Store {
     pub(crate) fn document(&self, origin: &Origin) -> io::Result<Option<Document>> {
         let key = origin.to_string();
         let read = self.database.begin_read().map_err(io::Error::other)?;
+        crate::benchmark::record_read_transaction();
         let documents = read.open_table(DOCUMENTS).map_err(io::Error::other)?;
         let Some(found) = documents.get(key.as_str()).map_err(io::Error::other)? else {
             return Ok(None);
@@ -206,6 +211,7 @@ impl Store {
         mut visit: impl FnMut(Document, Vec<Embedding>) -> io::Result<()>,
     ) -> io::Result<()> {
         let read = self.database.begin_read().map_err(io::Error::other)?;
+        crate::benchmark::record_read_transaction();
         let documents = read.open_table(DOCUMENTS).map_err(io::Error::other)?;
         for entry in documents.iter().map_err(io::Error::other)? {
             let (key, value) = entry.map_err(io::Error::other)?;
@@ -247,6 +253,7 @@ impl Store {
     /// decided once, in [`fault`], rather than at each call.
     fn carries(&self, stamp: &[u8]) -> Result<bool, redb::Error> {
         let read = self.database.begin_read()?;
+        crate::benchmark::record_read_transaction();
         match read.open_table(STAMP) {
             Ok(table) => {
                 let found = table.get(STAMPED)?;
@@ -259,6 +266,7 @@ impl Store {
                     return Ok(false);
                 }
                 let write = self.database.begin_write()?;
+                crate::benchmark::record_write_transaction();
                 {
                     let mut table = write.open_table(STAMP)?;
                     table.insert(STAMPED, stamp)?;
