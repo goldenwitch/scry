@@ -10,6 +10,8 @@ mod record;
 
 use std::io;
 use std::path::Path;
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition, TableError};
 
@@ -42,6 +44,13 @@ const STAMPED: &str = "stamp";
 pub struct Store {
     database: Database,
     model: Model,
+    #[cfg(test)]
+    fail_next_commit: AtomicBool,
+}
+
+pub(crate) struct PreparedRecord {
+    key: String,
+    bytes: Vec<u8>,
 }
 
 impl Store {
@@ -71,6 +80,8 @@ impl Store {
         let store = Self {
             database,
             model: model.clone(),
+            #[cfg(test)]
+            fail_next_commit: AtomicBool::new(false),
         };
         if store.stamped(&stamp)? {
             Ok(Ok(store))
@@ -93,17 +104,46 @@ impl Store {
     ///
     /// The disk, which is weather; and embeddings that are not one per span
     /// or name another model, which is a mistake rather than a decision.
-    pub(crate) fn replace(&self, document: &Document, embeddings: &[Embedding]) -> io::Result<()> {
+    pub(crate) fn prepare_replace(
+        &self,
+        document: &Document,
+        embeddings: &[Embedding],
+    ) -> io::Result<PreparedRecord> {
         let bytes = record::encode(document, embeddings, &self.model)?;
-        let key = document.origin().to_string();
+        crate::benchmark::record_owned_logical_bytes(bytes.len());
+        Ok(PreparedRecord {
+            key: document.origin().to_string(),
+            bytes,
+        })
+    }
+
+    /// Commits one prepared replacement in one redb write transaction.
+    pub(crate) fn commit_replace(&self, prepared: &PreparedRecord) -> io::Result<()> {
         let write = self.database.begin_write().map_err(io::Error::other)?;
+        crate::benchmark::record_write_transaction();
+        #[cfg(test)]
+        if self.fail_next_commit.swap(false, Ordering::Relaxed) {
+            return Err(io::Error::other("synthetic store write failure"));
+        }
         {
             let mut documents = write.open_table(DOCUMENTS).map_err(io::Error::other)?;
             documents
-                .insert(key.as_str(), bytes.as_slice())
+                .insert(prepared.key.as_str(), prepared.bytes.as_slice())
                 .map_err(io::Error::other)?;
         }
         write.commit().map_err(io::Error::other)
+    }
+
+    /// Prepares and commits one replacement.
+    #[cfg(test)]
+    pub(crate) fn replace(&self, document: &Document, embeddings: &[Embedding]) -> io::Result<()> {
+        let prepared = self.prepare_replace(document, embeddings)?;
+        self.commit_replace(&prepared)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn fail_next_commit(&self) {
+        self.fail_next_commit.store(true, Ordering::Relaxed);
     }
 
     /// Removes whatever is filed under `origin`.
@@ -122,6 +162,7 @@ impl Store {
     pub(crate) fn remove(&self, origin: &Origin) -> io::Result<()> {
         let key = origin.to_string();
         let write = self.database.begin_write().map_err(io::Error::other)?;
+        crate::benchmark::record_write_transaction();
         {
             let mut documents = write.open_table(DOCUMENTS).map_err(io::Error::other)?;
             documents.remove(key.as_str()).map_err(io::Error::other)?;
@@ -141,6 +182,7 @@ impl Store {
     pub(crate) fn document(&self, origin: &Origin) -> io::Result<Option<Document>> {
         let key = origin.to_string();
         let read = self.database.begin_read().map_err(io::Error::other)?;
+        crate::benchmark::record_read_transaction();
         let documents = read.open_table(DOCUMENTS).map_err(io::Error::other)?;
         let Some(found) = documents.get(key.as_str()).map_err(io::Error::other)? else {
             return Ok(None);
@@ -169,6 +211,7 @@ impl Store {
         mut visit: impl FnMut(Document, Vec<Embedding>) -> io::Result<()>,
     ) -> io::Result<()> {
         let read = self.database.begin_read().map_err(io::Error::other)?;
+        crate::benchmark::record_read_transaction();
         let documents = read.open_table(DOCUMENTS).map_err(io::Error::other)?;
         for entry in documents.iter().map_err(io::Error::other)? {
             let (key, value) = entry.map_err(io::Error::other)?;
@@ -210,6 +253,7 @@ impl Store {
     /// decided once, in [`fault`], rather than at each call.
     fn carries(&self, stamp: &[u8]) -> Result<bool, redb::Error> {
         let read = self.database.begin_read()?;
+        crate::benchmark::record_read_transaction();
         match read.open_table(STAMP) {
             Ok(table) => {
                 let found = table.get(STAMPED)?;
@@ -222,6 +266,7 @@ impl Store {
                     return Ok(false);
                 }
                 let write = self.database.begin_write()?;
+                crate::benchmark::record_write_transaction();
                 {
                     let mut table = write.open_table(STAMP)?;
                     table.insert(STAMPED, stamp)?;
@@ -353,6 +398,41 @@ mod tests {
             unreachable!()
         };
         assert_eq!(held, vec![second]);
+    }
+
+    #[test]
+    fn a_write_phase_failure_is_reported_after_preparation() {
+        let path = path("write-failure");
+        let model = model("test");
+        let store = store(&path, &model);
+        let document = document("a.md", "one two three four");
+        let Ok(prepared) = store.prepare_replace(&document, &pair(&model)) else {
+            unreachable!()
+        };
+        store.fail_next_commit();
+        assert!(store.commit_replace(&prepared).is_err());
+        let Ok(read) = store.document(document.origin()) else {
+            unreachable!()
+        };
+        assert!(read.is_none());
+    }
+
+    #[test]
+    fn a_preparation_failure_leaves_the_existing_record_untouched() {
+        let path = path("preparation-failure");
+        let model = model("test");
+        let store = store(&path, &model);
+        let first = document("a.md", "one two three four");
+        let replacement = document("a.md", "five six seven eight");
+        let Ok(()) = store.replace(&first, &pair(&model)) else {
+            unreachable!()
+        };
+        let invalid = vec![embedding(&model, vec![1.0, 0.0])];
+        assert!(store.prepare_replace(&replacement, &invalid).is_err());
+        let Ok(read) = store.document(first.origin()) else {
+            unreachable!()
+        };
+        assert_eq!(read.as_ref(), Some(&first));
     }
 
     #[test]

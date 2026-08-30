@@ -10,6 +10,16 @@ use std::io;
 use crate::origin::Origin;
 use crate::store::Store;
 
+trait DeleteVerb {
+    fn delete(&self, origin: &Origin) -> io::Result<()>;
+}
+
+impl DeleteVerb for Store {
+    fn delete(&self, origin: &Origin) -> io::Result<()> {
+        self.remove(origin)
+    }
+}
+
 impl Store {
     /// Takes away whatever is filed under `origin`.
     ///
@@ -31,7 +41,7 @@ impl Store {
     /// The disk, which is weather. The vocabulary gives `delete` no failure of
     /// its own — it is the one verb that decides nothing.
     pub fn delete(&self, origin: &Origin) -> io::Result<()> {
-        self.remove(origin)
+        <Self as DeleteVerb>::delete(self, origin)
     }
 }
 

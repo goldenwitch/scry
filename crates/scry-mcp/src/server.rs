@@ -1,7 +1,8 @@
+use std::collections::BTreeSet;
 use std::io::{self, BufRead, Write};
 use std::time::Duration;
 
-use scry::{AddRefusal, Count, Embed, HandleRefusal, Query, Slice, Store, Text};
+use scry::{Count, Embed, HandleRefusal, Query, Slice, Store, Text};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -134,17 +135,24 @@ impl Server {
 
     fn add(&mut self, arguments: Value) -> Result<Value, ToolError> {
         let arguments = parse_arguments::<AddArguments>(arguments)?;
-        let origin = scry::Origin::parse(&arguments.origin)
-            .ok_or_else(|| ToolError::new("invalid_input", "origin is not valid"))?;
-        match self.store.add(
+        let mut origins = BTreeSet::new();
+        for spelling in arguments.origins {
+            let origin = scry::Origin::parse(&spelling)
+                .ok_or_else(|| ToolError::new("invalid_input", "origin is not valid"))?;
+            origins.insert(origin);
+        }
+        let report = self.store.add(
             &mut self.embed,
             &self.slice,
-            &origin,
+            &origins,
             Duration::from_secs(arguments.ttl_seconds),
-        ) {
-            Ok(Ok(())) => Ok(json!({})),
-            Ok(Err(refusal)) => Err(add_refusal(&refusal)),
-            Err(error) => Err(ToolError::new("io", error.to_string())),
+        );
+        let (result, halted) = crate::wire::add_report(&report)
+            .map_err(|error| ToolError::new("serialization", error))?;
+        if halted {
+            Err(ToolError::halted(result))
+        } else {
+            Ok(result)
         }
     }
 
@@ -212,7 +220,7 @@ struct CallParams {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AddArguments {
-    origin: String,
+    origins: Vec<String>,
     ttl_seconds: u64,
 }
 
@@ -245,6 +253,7 @@ struct ProvenanceArguments {
 struct ToolError {
     kind: String,
     message: String,
+    structured: Option<Value>,
 }
 
 impl ToolError {
@@ -252,6 +261,15 @@ impl ToolError {
         Self {
             kind: kind.into(),
             message: message.into(),
+            structured: None,
+        }
+    }
+
+    fn halted(report: Value) -> Self {
+        Self {
+            kind: String::new(),
+            message: "add halted".to_owned(),
+            structured: Some(report),
         }
     }
 }
@@ -266,14 +284,6 @@ fn count(wanted: u64) -> Result<Count, ToolError> {
         .map_err(|_| ToolError::new("invalid_input", "count does not fit this platform"))?;
     Count::new(wanted)
         .ok_or_else(|| ToolError::new("invalid_input", "count must be greater than zero"))
-}
-
-fn add_refusal(refusal: &AddRefusal) -> ToolError {
-    let kind = match refusal {
-        AddRefusal::NotFound(_) => "not_found",
-        AddRefusal::NotText(_) => "not_text",
-    };
-    ToolError::new(kind, refusal.to_string())
 }
 
 fn handle_refusal(refusal: &HandleRefusal) -> ToolError {
@@ -294,6 +304,13 @@ fn tool_success(result: &Value) -> Result<Value, Failure> {
 }
 
 fn tool_failure(error: &ToolError) -> Value {
+    if let Some(structured) = &error.structured {
+        return json!({
+            "content": [{ "type": "text", "text": error.message }],
+            "structuredContent": structured,
+            "isError": true,
+        });
+    }
     let message = error.message.clone();
     json!({
         "content": [{ "type": "text", "text": message }],
@@ -312,12 +329,15 @@ fn tools() -> Value {
         "tools": [
             tool(
                 "add",
-                "Fetch an origin, index its text, and replace its document in the corpus.",
+                "Fetch origins, index their text, and replace their documents in the corpus.",
                 &json!({
-                    "origin": { "type": "string" },
+                    "origins": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                    },
                     "ttl_seconds": { "type": "integer", "minimum": 0 },
                 }),
-                &["origin", "ttl_seconds"],
+                &["origins", "ttl_seconds"],
             ),
             tool(
                 "delete",

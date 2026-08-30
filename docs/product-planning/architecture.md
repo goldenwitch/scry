@@ -66,7 +66,8 @@ reads it and it stays ours to change.
 ## Flows
 
 ```
-add(origin, ttl)      fetch -> slice -> embed -> store.replace
+add(origins, ttl)     for each canonical origin:
+                        fetch -> slice -> embed -> store.replace
 delete(origin)        store.remove
 search(query, count)  embed -> scan $corpus -> handle.mint -> hit*
 neighbours(handle, n) handle.verify -> adjacent spans -> handle.mint -> passage*
@@ -74,7 +75,17 @@ provenance(handle)    store.document -> handle.verify -> provenance | Stale | Go
 ```
 
 Only `add` and `delete` write, and `add` is the only verb that reaches the
-network.
+network. `add` is a set upsert, not exact-set replacement: each submitted
+origin replaces its own document, while an omitted origin is neither read nor
+changed. The loop is sequential, and `Embed::passages` still batches only the
+chunks belonging to one document.
+
+Each member is fetched, sliced, embedded, encoded, and validated before its
+own redb write transaction begins. A successful commit makes that origin
+visible immediately. A refusal produces a report item and the loop continues;
+a preparation failure or a failed write phase halts later work. Earlier
+commits remain visible, and later members are reported as `NotAttempted`. An
+empty set opens no write transaction and performs no model or network work.
 
 Every handle an agent holds was minted from text the store held at that moment,
 and every handle it hands back is verified against the text there now.

@@ -84,4 +84,5 @@ file was created by a compatible scry build.
 
 - [Harness setup](docs/harness-support.md)
 - [VS Code MCP configuration](.vscode/mcp.json)
+- [Benchmark interpretation](docs/benchmarks.md)
 - [License](LICENSE)

@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use scry::{Handle, Hit, Passage, Provenance};
+use scry::{AddOutcome, AddRefusal, AddReport, AddResult, Handle, Hit, Passage, Provenance};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -75,6 +75,31 @@ struct ProvenanceWire {
     ttl_seconds: u64,
 }
 
+#[derive(Debug, Serialize)]
+struct AddItemWire {
+    origin: String,
+    status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<AddErrorWire>,
+}
+
+#[derive(Debug, Serialize)]
+struct AddErrorWire {
+    kind: &'static str,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+struct AddReportWire {
+    status: &'static str,
+    items: Vec<AddItemWire>,
+}
+
+pub(crate) fn add_report(value: &AddReport) -> Result<(Value, bool), String> {
+    let items = value.items().iter().map(add_item).collect();
+    add_report_items(items)
+}
+
 pub(crate) fn hits(value: &[Hit]) -> Result<Value, String> {
     let hits = value
         .iter()
@@ -104,6 +129,52 @@ pub(crate) fn provenance(value: &Provenance) -> Result<Value, String> {
         ttl_seconds: value.ttl().as_secs(),
     })
     .map_err(|error| error.to_string())
+}
+
+fn add_item(value: &AddResult) -> AddItemWire {
+    let (status, error) = match value.outcome() {
+        AddOutcome::Upserted => ("upserted", None),
+        AddOutcome::Refused(refusal) => ("refused", Some(add_error(refusal))),
+        AddOutcome::Failed(error) => ("failed", Some(io_error(error))),
+        AddOutcome::Uncertain(error) => ("uncertain", Some(io_error(error))),
+        AddOutcome::NotAttempted => ("not_attempted", None),
+    };
+    AddItemWire {
+        origin: value.origin().to_string(),
+        status,
+        error,
+    }
+}
+
+fn add_report_items(items: Vec<AddItemWire>) -> Result<(Value, bool), String> {
+    let halted = items
+        .iter()
+        .any(|item| matches!(item.status, "failed" | "uncertain" | "not_attempted"));
+    let report = AddReportWire {
+        status: if halted { "halted" } else { "complete" },
+        items,
+    };
+    serde_json::to_value(report)
+        .map(|value| (value, halted))
+        .map_err(|error| error.to_string())
+}
+
+fn add_error(refusal: &AddRefusal) -> AddErrorWire {
+    let kind = match refusal {
+        AddRefusal::NotFound(_) => "not_found",
+        AddRefusal::NotText(_) => "not_text",
+    };
+    AddErrorWire {
+        kind,
+        message: refusal.to_string(),
+    }
+}
+
+fn io_error(error: &std::io::Error) -> AddErrorWire {
+    AddErrorWire {
+        kind: "io",
+        message: error.to_string(),
+    }
 }
 
 fn passage(value: &Passage) -> PassageWire {
@@ -173,5 +244,86 @@ fn hex_value(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{AddErrorWire, AddItemWire, add_report_items};
+
+    fn item(origin: &str, status: &'static str, error: Option<AddErrorWire>) -> AddItemWire {
+        AddItemWire {
+            origin: origin.to_owned(),
+            status,
+            error,
+        }
+    }
+
+    #[test]
+    fn a_complete_report_has_no_tool_error_state() {
+        let Ok((report, halted)) = add_report_items(vec![
+            item("a.md", "upserted", None),
+            item(
+                "b.md",
+                "refused",
+                Some(AddErrorWire {
+                    kind: "not_found",
+                    message: "no bytes at b.md".to_owned(),
+                }),
+            ),
+        ]) else {
+            unreachable!()
+        };
+        assert!(!halted);
+        assert_eq!(
+            report,
+            json!({
+                "status": "complete",
+                "items": [
+                    { "origin": "a.md", "status": "upserted" },
+                    {
+                        "origin": "b.md",
+                        "status": "refused",
+                        "error": { "kind": "not_found", "message": "no bytes at b.md" },
+                    },
+                ],
+            })
+        );
+    }
+
+    #[test]
+    fn a_halted_report_retains_failed_and_unattempted_items() {
+        let Ok((report, halted)) = add_report_items(vec![
+            item("a.md", "upserted", None),
+            item(
+                "b.md",
+                "failed",
+                Some(AddErrorWire {
+                    kind: "io",
+                    message: "processing failed".to_owned(),
+                }),
+            ),
+            item("c.md", "not_attempted", None),
+        ]) else {
+            unreachable!()
+        };
+        assert!(halted);
+        assert_eq!(
+            report,
+            json!({
+                "status": "halted",
+                "items": [
+                    { "origin": "a.md", "status": "upserted" },
+                    {
+                        "origin": "b.md",
+                        "status": "failed",
+                        "error": { "kind": "io", "message": "processing failed" },
+                    },
+                    { "origin": "c.md", "status": "not_attempted" },
+                ],
+            })
+        );
     }
 }

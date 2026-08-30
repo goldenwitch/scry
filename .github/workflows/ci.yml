@@ -35,8 +35,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Prepare pinned model cache
+        run: cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --prepare-cache
+
       - name: Run tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets --all-features --locked
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+
+      - name: Check v1 benchmark baseline
+        run: cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --check benchmarks/baseline-v1.json

@@ -1,0 +1,19 @@
+[package]
+name = "scry-benchmarks"
+version = "0.1.0"
+description = "Machine-agnostic benchmark artifacts for the scry corpus."
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+grimoire = { version = "1.0.0", git = "https://github.com/goldenwitch/grimoire.git", rev = "bd9920bc1ae79d40383fedcacea3adb87fd98109", package = "grimoire" }
+hmac-sha256 = "1.1.14"
+scry = { path = "../scry", version = "0.1.0", features = ["benchmark-instrumentation"] }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

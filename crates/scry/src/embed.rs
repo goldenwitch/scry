@@ -165,9 +165,17 @@ impl Embed {
         for text in texts {
             self.whole(text)?;
         }
-        self.embedder
-            .embed(texts, None)
-            .map_err(io::Error::other)?
+        let input_bytes = texts
+            .iter()
+            .try_fold(0usize, |total, text| total.checked_add(text.len()));
+        let Some(input_bytes) = input_bytes else {
+            return Err(io::Error::other("embedding input byte count overflowed"));
+        };
+        crate::benchmark::record_embedding_call(input_bytes);
+        let values = self.embedder.embed(texts, None).map_err(io::Error::other)?;
+        crate::benchmark::record_embedding_vectors(values.len());
+        crate::benchmark::record_owned_logical_bytes(input_bytes);
+        values
             .into_iter()
             .map(|values| self.embedding(values))
             .collect()

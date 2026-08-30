@@ -32,6 +32,10 @@ pub struct Provenance {
     ttl: Duration,
 }
 
+trait ProvenanceVerb {
+    fn provenance(&self, handle: &Handle) -> io::Result<Result<Provenance, HandleRefusal>>;
+}
+
 impl Provenance {
     /// The provenance of `chunk`, from the document read at `fetched_at` with
     /// this `ttl`.
@@ -82,6 +86,25 @@ impl Provenance {
     }
 }
 
+impl ProvenanceVerb for Store {
+    fn provenance(&self, handle: &Handle) -> io::Result<Result<Provenance, HandleRefusal>> {
+        let origin = handle.chunk().origin();
+        let document = self.document(origin)?;
+        crate::benchmark::record_provenance_lookup();
+        let Some(document) = document else {
+            return Ok(Err(HandleRefusal::Gone(origin.clone())));
+        };
+        if handle.verify(&document).is_none() {
+            return Ok(Err(HandleRefusal::Stale(origin.clone())));
+        }
+        Ok(Ok(Provenance::new(
+            handle.chunk().clone(),
+            document.fetched_at(),
+            document.ttl(),
+        )))
+    }
+}
+
 impl Store {
     /// Checks `handle` against the text held now, then answers with where that
     /// text came from and how old the material is.
@@ -109,18 +132,7 @@ impl Store {
     /// refusal rather than seated beside it, as [`open`](Store::open),
     /// [`add`](Store::add) and [`neighbours`](Store::neighbours) do.
     pub fn provenance(&self, handle: &Handle) -> io::Result<Result<Provenance, HandleRefusal>> {
-        let origin = handle.chunk().origin();
-        let Some(document) = self.document(origin)? else {
-            return Ok(Err(HandleRefusal::Gone(origin.clone())));
-        };
-        if handle.verify(&document).is_none() {
-            return Ok(Err(HandleRefusal::Stale(origin.clone())));
-        }
-        Ok(Ok(Provenance::new(
-            handle.chunk().clone(),
-            document.fetched_at(),
-            document.ttl(),
-        )))
+        <Self as ProvenanceVerb>::provenance(self, handle)
     }
 }
 

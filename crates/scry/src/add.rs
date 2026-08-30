@@ -6,6 +6,7 @@
 //! order is the whole of it. A verb that reached past those parts to make its
 //! own ruling would be a second place that ruling lived.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
 
@@ -17,8 +18,152 @@ use crate::refusal::AddRefusal;
 use crate::slice::Slice;
 use crate::store::Store;
 
+/// The result of one set upsert, in canonical origin order.
+#[derive(Debug)]
+pub struct AddReport {
+    items: Vec<AddResult>,
+}
+
+impl AddReport {
+    /// The result for each canonical origin submitted to `add`.
+    #[must_use]
+    pub fn items(&self) -> &[AddResult] {
+        &self.items
+    }
+}
+
+/// The outcome for one canonical origin in an [`AddReport`].
+#[derive(Debug)]
+pub struct AddResult {
+    origin: Origin,
+    outcome: AddOutcome,
+}
+
+impl AddResult {
+    /// The canonical origin this result belongs to.
+    #[must_use]
+    pub const fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
+    /// What happened while upserting this origin.
+    #[must_use]
+    pub const fn outcome(&self) -> &AddOutcome {
+        &self.outcome
+    }
+}
+
+/// The result of processing one origin.
+#[derive(Debug)]
+pub enum AddOutcome {
+    /// The replacement was committed successfully.
+    Upserted,
+    /// The origin was named, but its bytes were absent or not text.
+    Refused(AddRefusal),
+    /// Preparation failed before a write could make the replacement visible.
+    Failed(io::Error),
+    /// The store write phase failed, so visibility of the replacement is unknown.
+    Uncertain(io::Error),
+    /// Processing did not start because an earlier member failed.
+    NotAttempted,
+}
+
+trait AddVerb {
+    fn add(
+        &self,
+        embed: &mut Embed,
+        slice: &Slice,
+        origins: &BTreeSet<Origin>,
+        ttl: Duration,
+    ) -> AddReport;
+}
+
+impl AddVerb for Store {
+    fn add(
+        &self,
+        embed: &mut Embed,
+        slice: &Slice,
+        origins: &BTreeSet<Origin>,
+        ttl: Duration,
+    ) -> AddReport {
+        orchestrate(origins, |origin| {
+            process_member(self, embed, slice, origin, ttl)
+        })
+    }
+}
+
+fn process_member(
+    store: &Store,
+    embed: &mut Embed,
+    slice: &Slice,
+    origin: &Origin,
+    ttl: Duration,
+) -> AddOutcome {
+    let (text, fetched_at) = match fetch(origin) {
+        Ok(read) => read,
+        Err(refusal) => return AddOutcome::Refused(refusal),
+    };
+    let spans = match slice.spans(&text) {
+        Ok(spans) => spans,
+        Err(error) => return AddOutcome::Failed(error),
+    };
+    let Some(document) = Document::new(origin.clone(), text, fetched_at, ttl, spans) else {
+        return AddOutcome::Failed(io::Error::other(
+            "the text was not cut into a partition of itself",
+        ));
+    };
+    let Some(passages) = document
+        .spans()
+        .iter()
+        .map(|span| document.text().at(*span))
+        .collect::<Option<Vec<&str>>>()
+    else {
+        return AddOutcome::Failed(io::Error::other("a span of the document does not read"));
+    };
+    let embeddings = match embed.passages(&passages) {
+        Ok(embeddings) => embeddings,
+        Err(error) => return AddOutcome::Failed(error),
+    };
+    let prepared = match store.prepare_replace(&document, &embeddings) {
+        Ok(prepared) => prepared,
+        Err(error) => return AddOutcome::Failed(error),
+    };
+    match store.commit_replace(&prepared) {
+        Ok(()) => AddOutcome::Upserted,
+        Err(error) => AddOutcome::Uncertain(error),
+    }
+}
+
+fn orchestrate(
+    origins: &BTreeSet<Origin>,
+    mut process: impl FnMut(&Origin) -> AddOutcome,
+) -> AddReport {
+    let mut items = Vec::with_capacity(origins.len());
+    let mut halted = false;
+    for origin in origins {
+        let outcome = if halted {
+            AddOutcome::NotAttempted
+        } else {
+            process(origin)
+        };
+        crate::benchmark::record_add_member(match &outcome {
+            AddOutcome::Upserted => "upserted",
+            AddOutcome::Refused(_) => "refused",
+            AddOutcome::Failed(_) => "failed",
+            AddOutcome::Uncertain(_) => "uncertain",
+            AddOutcome::NotAttempted => "not-attempted",
+        });
+        halted |= matches!(&outcome, AddOutcome::Failed(_) | AddOutcome::Uncertain(_));
+        items.push(AddResult {
+            origin: origin.clone(),
+            outcome,
+        });
+    }
+    AddReport { items }
+}
+
 impl Store {
-    /// Reads what is at `origin`, cuts it, embeds it, and files it — replacing
+    /// Reads each `origin`, cuts it, embeds it, and files it — replacing
     /// whatever was there under that origin.
     ///
     /// `ttl` is how long the material is said to stay good for. Every add
@@ -30,53 +175,41 @@ impl Store {
     /// needs both.
     ///
     /// Nothing is written until the document and all of its embeddings are in
-    /// hand, and then in one put — so an add that fails leaves the document
-    /// that was there untouched rather than half of a new one.
+    /// hand, and then in one put — so a preparation failure leaves the
+    /// document that was there untouched rather than half of a new one.
     ///
     /// # Errors
     ///
-    /// [`NotFound`](AddRefusal::NotFound) when no bytes arrive at `origin`,
-    /// and [`NotText`](AddRefusal::NotText) when the bytes there are not
-    /// something scry will index. Those two are the whole of what `add`
-    /// decides.
+    /// Each member reports [`NotFound`](AddRefusal::NotFound) when no bytes
+    /// arrive at its origin, or [`NotText`](AddRefusal::NotText) when the bytes
+    /// there are not something scry will index. Those two are the whole of
+    /// what `add` decides about source material. Preparation failures are
+    /// [`AddOutcome::Failed`], write-phase failures are
+    /// [`AddOutcome::Uncertain`], and later members after either are
+    /// [`AddOutcome::NotAttempted`].
     ///
-    /// Outside them: the disk, the network's plumbing, the tokenizer and the
-    /// inference session, which are weather. They are nested outside the
-    /// refusal rather than seated beside it, as
-    /// [`open`](Store::open) does, because the vocabulary gives `add` two
-    /// failures and weather is not a word in it.
+    /// Refusals continue the sequential operation. A preparation or
+    /// persistence failure halts it after recording the failure and leaves
+    /// earlier successful replacements committed.
     pub fn add(
         &self,
         embed: &mut Embed,
         slice: &Slice,
-        origin: &Origin,
+        origins: &BTreeSet<Origin>,
         ttl: Duration,
-    ) -> io::Result<Result<(), AddRefusal>> {
-        let (text, fetched_at) = match fetch(origin) {
-            Ok(read) => read,
-            Err(refusal) => return Ok(Err(refusal)),
-        };
-        let spans = slice.spans(&text)?;
-        let document = Document::new(origin.clone(), text, fetched_at, ttl, spans)
-            .ok_or_else(|| io::Error::other("the text was not cut into a partition of itself"))?;
-        // Every span is one the document was built from, so this reads; the
-        // alternative to saying so is a panic, which is not one of the five.
-        let passages = document
-            .spans()
-            .iter()
-            .map(|span| document.text().at(*span))
-            .collect::<Option<Vec<&str>>>()
-            .ok_or_else(|| io::Error::other("a span of the document does not read"))?;
-        let embeddings = embed.passages(&passages)?;
-        self.replace(&document, &embeddings)?;
-        Ok(Ok(()))
+    ) -> AddReport {
+        <Self as AddVerb>::add(self, embed, slice, origins, ttl)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::collections::BTreeSet;
     use std::fs;
+    use std::io;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
 
     use crate::document::Document;
     use crate::embed::Embed;
@@ -86,6 +219,26 @@ mod tests {
     use crate::scaffold::{TTL, held, seams};
     use crate::slice::Slice;
     use crate::store::Store;
+
+    use super::{AddOutcome, AddReport, AddResult, AddVerb, orchestrate};
+
+    struct CountingAdd<'store> {
+        inner: &'store Store,
+        calls: Cell<usize>,
+    }
+
+    impl AddVerb for CountingAdd<'_> {
+        fn add(
+            &self,
+            embed: &mut Embed,
+            slice: &Slice,
+            origins: &BTreeSet<Origin>,
+            ttl: Duration,
+        ) -> AddReport {
+            self.calls.set(self.calls.get() + 1);
+            <Store as AddVerb>::add(self.inner, embed, slice, origins, ttl)
+        }
+    }
 
     /// A directory of this test's own, emptied first so a rerun starts where
     /// the last one did.
@@ -122,19 +275,45 @@ mod tests {
     }
 
     fn added(store: &Store, embed: &mut Embed, slice: &Slice, origin: &Origin) {
-        match store.add(embed, slice, origin, TTL) {
-            Ok(Ok(())) => (),
-            Ok(Err(refusal)) => unreachable!("{refusal}"),
-            Err(error) => unreachable!("{error}"),
+        let origins = BTreeSet::from([origin.clone()]);
+        let report = store.add(embed, slice, &origins, TTL);
+        let Some(result) = report.items().first() else {
+            unreachable!("the add report was empty")
+        };
+        match result.outcome() {
+            AddOutcome::Upserted => (),
+            outcome => unreachable!("{outcome:?}"),
         }
     }
 
     fn refused(store: &Store, embed: &mut Embed, slice: &Slice, origin: &Origin) -> AddRefusal {
-        match store.add(embed, slice, origin, TTL) {
-            Ok(Ok(())) => unreachable!("the origin was added"),
-            Ok(Err(refusal)) => refusal,
-            Err(error) => unreachable!("{error}"),
+        let origins = BTreeSet::from([origin.clone()]);
+        let report = store.add(embed, slice, &origins, TTL);
+        let Some(result) = report.items().first() else {
+            unreachable!("the add report was empty")
+        };
+        match result.outcome() {
+            AddOutcome::Refused(refusal) => refusal.clone(),
+            outcome => unreachable!("{outcome:?}"),
         }
+    }
+
+    #[test]
+    fn an_add_implementation_can_wrap_another() {
+        let (mut embed, slice, store, directory) = parts("wrapped");
+        let origin = written(&directory, "note.md", b"the wrapped document");
+        let origins = BTreeSet::from([origin]);
+        let wrapped = CountingAdd {
+            inner: &store,
+            calls: Cell::new(0),
+        };
+
+        let report = <CountingAdd<'_> as AddVerb>::add(&wrapped, &mut embed, &slice, &origins, TTL);
+        assert_eq!(wrapped.calls.get(), 1);
+        assert!(matches!(
+            report.items().first().map(AddResult::outcome),
+            Some(AddOutcome::Upserted)
+        ));
     }
 
     /// Every document in the corpus, with the embeddings filed beside it.
@@ -243,5 +422,116 @@ mod tests {
         };
         assert!(document.spans().is_empty());
         assert!(embeddings.is_empty());
+    }
+
+    fn origins(names: &[&str]) -> BTreeSet<Origin> {
+        names
+            .iter()
+            .map(|name| crate::scaffold::origin(name))
+            .collect()
+    }
+
+    #[test]
+    fn an_empty_set_does_no_member_work() {
+        let origins = BTreeSet::new();
+        let mut invoked = false;
+        let report = orchestrate(&origins, |_| {
+            invoked = true;
+            AddOutcome::Upserted
+        });
+        assert!(!invoked);
+        assert!(report.items().is_empty());
+    }
+
+    #[test]
+    fn a_refusal_does_not_stop_later_members() {
+        let origins = origins(&["a.md", "b.md", "c.md"]);
+        let mut attempted = 0;
+        let report = orchestrate(&origins, |origin| {
+            attempted += 1;
+            if attempted == 1 {
+                AddOutcome::Refused(AddRefusal::NotFound(origin.clone()))
+            } else {
+                AddOutcome::Upserted
+            }
+        });
+        assert_eq!(attempted, origins.len());
+        assert_eq!(report.items().len(), origins.len());
+        assert!(matches!(
+            report.items().first().map(AddResult::outcome),
+            Some(AddOutcome::Refused(AddRefusal::NotFound(_)))
+        ));
+        assert!(
+            report
+                .items()
+                .iter()
+                .skip(1)
+                .all(|item| matches!(item.outcome(), AddOutcome::Upserted))
+        );
+    }
+
+    fn assert_halts_at(failure: AddOutcome) {
+        let origins = origins(&["a.md", "b.md", "c.md"]);
+        let expected = origins.iter().take(2).cloned().collect::<Vec<_>>();
+        let mut attempted = Vec::new();
+        let mut failure = Some(failure);
+        let report = orchestrate(&origins, |origin| {
+            attempted.push(origin.clone());
+            if attempted.len() == 1 {
+                AddOutcome::Upserted
+            } else {
+                let Some(failure) = failure.take() else {
+                    unreachable!("the member after a halt was attempted")
+                };
+                failure
+            }
+        });
+        assert_eq!(attempted, expected);
+        assert_eq!(report.items().len(), origins.len());
+        assert!(matches!(
+            report.items().first().map(AddResult::outcome),
+            Some(AddOutcome::Upserted)
+        ));
+        assert!(matches!(
+            report.items().get(1).map(AddResult::outcome),
+            Some(AddOutcome::Failed(_) | AddOutcome::Uncertain(_))
+        ));
+        assert!(
+            report
+                .items()
+                .iter()
+                .skip(2)
+                .all(|item| matches!(item.outcome(), AddOutcome::NotAttempted))
+        );
+    }
+
+    #[test]
+    fn a_failed_member_halts_later_members() {
+        assert_halts_at(AddOutcome::Failed(io::Error::other("processing failed")));
+    }
+
+    #[test]
+    fn an_uncertain_member_halts_later_members() {
+        assert_halts_at(AddOutcome::Uncertain(io::Error::other("write failed")));
+    }
+
+    #[test]
+    fn a_store_write_failure_is_uncertain_and_halts_later_members() {
+        let (mut embed, slice, store, directory) = parts("uncertain-write");
+        let first = written(&directory, "first.md", b"the first document");
+        let second = written(&directory, "second.md", b"the second document");
+        let origins = BTreeSet::from([first, second]);
+        store.fail_next_commit();
+
+        let report = store.add(&mut embed, &slice, &origins, TTL);
+        assert_eq!(report.items().len(), 2);
+        assert!(matches!(
+            report.items().first().map(AddResult::outcome),
+            Some(AddOutcome::Uncertain(_))
+        ));
+        assert!(matches!(
+            report.items().get(1).map(AddResult::outcome),
+            Some(AddOutcome::NotAttempted)
+        ));
     }
 }

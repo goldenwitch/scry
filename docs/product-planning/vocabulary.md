@@ -22,6 +22,7 @@ embedding  ::= model vector
 vector     ::= float*
 limit      ::= tokens
 window     ::= tokens
+origins    ::= origin*
 ```
 
 `origin` is the document's identity; adding the same origin replaces the
@@ -56,6 +57,25 @@ offsets into `text`. Only the model's tokenizer relates the two, so `slice`
 counts in tokens and cuts at offsets — and a chunk too large to embed cannot be
 constructed.
 
+`origins` is a canonical set, not an ordered list. It contains no duplicate
+origins after normalization, and the set's canonical order is the order in
+which `add` reports its results.
+
+The result of `add` is an `add-report` with one `add-result` per input origin:
+
+```ebnf
+add-report ::= add-result*
+add-result ::= origin add-outcome
+add-outcome ::= Upserted | Refused(AddRefusal) | Failed(io::Error) | Uncertain(io::Error) | NotAttempted
+```
+
+`Upserted` means the member's replacement committed. `Refused` carries the
+existing `NotFound(origin)` or `NotText(origin)` decision and does not stop
+other members. `Failed` means preparation before a write made the member
+visible failed. `Uncertain` means the store write phase returned an error and
+the visibility of that member is unknown. Either of those outcomes stops the
+operation, and later members are `NotAttempted`.
+
 ## Projections
 
 Derived, so they are not nouns. One that names `$corpus` reads state; one that
@@ -71,7 +91,7 @@ expired(document)          = now > document.fetched_at + document.ttl
 
 ```ebnf
 open       : path model   -> corpus | Incompatible(path)
-add        : origin ttl   -> () | NotFound(origin) | NotText(origin)
+add        : origins ttl  -> add-report
 delete     : origin       -> ()
 search     : query count  -> hit*
 neighbours : handle count -> passage* | Stale(origin) | Gone(origin)
@@ -82,11 +102,17 @@ Every verb but `open` is called on `$corpus`. All of them read it; only `add`
 and `delete` write it. `model` is supplied by the embed seam; `Store::open`
 recognises it but does not load one.
 
-`ttl` is supplied by every `add`; there is no default. `expired` is advisory —
-nothing is excluded from `search`, and nothing refetches itself. Whoever holds a
-`provenance` computes it, from the `fetched_at` and `ttl` in it. It is a
-different claim from `Stale`: one says the material has aged, the other says
-this text is no longer there.
+`ttl` is supplied by every `add`; there is no default, and one ttl is shared by
+the whole set. `expired` is advisory — nothing is excluded from `search`, and
+nothing refetches itself. Whoever holds a `provenance` computes it, from the
+`fetched_at` and `ttl` in it. It is a different claim from `Stale`: one says
+the material has aged, the other says this text is no longer there.
+
+`add` processes canonical origins sequentially. It fetches, cuts, embeds, and
+prepares one member before committing that member's replacement. A refusal is
+a member result and processing continues. A `Failed` or `Uncertain` result
+halts the operation; earlier committed members remain visible and later
+members are `NotAttempted`. An empty set performs no work.
 
 `delete` on an origin holding nothing is a no-op, as `add` replaces without
 asking what was there.
@@ -102,9 +128,11 @@ model or another layout, and this build cannot use it: no verb runs, and nothing
 an agent does will change that. A terminal state earns a word precisely because
 nothing proceeds from it.
 
-Those five are the whole of the vocabulary's failures. A refusal is a decision
-scry makes and an agent can act on; a disk that will not read is weather, and
-weather is not a word here.
+The four named refusals remain the whole of the material refusal taxonomy. A
+refusal is a decision scry makes and an agent can act on. `Failed` and
+`Uncertain` are report outcomes that carry weather as `io::Error`, while
+`NotAttempted` records that no member operation ran. A disk that will not read
+is weather, and weather is not a new refusal variant here.
 
 ## Unwritten
 

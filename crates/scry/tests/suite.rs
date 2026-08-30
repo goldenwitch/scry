@@ -30,8 +30,8 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime};
 
 use scry::{
-    AddRefusal, Count, Embed, Handle, HandleRefusal, Hit, Model, Origin, Passage, Provenance,
-    Query, Slice, Store, Text,
+    AddOutcome, AddRefusal, AddReport, Count, Embed, Handle, HandleRefusal, Hit, Model, Origin,
+    Passage, Provenance, Query, Slice, Store, Text,
 };
 
 /// How long this suite's material is said to stay good for. Only the test
@@ -150,19 +150,47 @@ fn long(sentence: &str) -> String {
 }
 
 fn added(store: &Store, seams: &mut Seams, origin: &Origin) {
-    match store.add(&mut seams.embed, &seams.slice, origin, TTL) {
-        Ok(Ok(())) => (),
-        Ok(Err(refusal)) => unreachable!("{refusal}"),
-        Err(error) => unreachable!("{error}"),
+    let origins = std::collections::BTreeSet::from([origin.clone()]);
+    let report = add_report(store, seams, &origins, TTL);
+    let Some(result) = report.items().first() else {
+        unreachable!("the add report was empty")
+    };
+    match result.outcome() {
+        AddOutcome::Upserted => (),
+        outcome => unreachable!("{outcome:?}"),
     }
 }
 
 fn not_added(store: &Store, seams: &mut Seams, origin: &Origin) -> AddRefusal {
-    match store.add(&mut seams.embed, &seams.slice, origin, TTL) {
-        Ok(Ok(())) => unreachable!("the origin was added"),
-        Ok(Err(refusal)) => refusal,
-        Err(error) => unreachable!("{error}"),
+    let origins = std::collections::BTreeSet::from([origin.clone()]);
+    let report = add_report(store, seams, &origins, TTL);
+    let Some(result) = report.items().first() else {
+        unreachable!("the add report was empty")
+    };
+    match result.outcome() {
+        AddOutcome::Refused(refusal) => refusal.clone(),
+        outcome => unreachable!("{outcome:?}"),
     }
+}
+
+fn add_report(
+    store: &Store,
+    seams: &mut Seams,
+    origins: &std::collections::BTreeSet<Origin>,
+    ttl: Duration,
+) -> AddReport {
+    store.add(&mut seams.embed, &seams.slice, origins, ttl)
+}
+
+fn result_for<'report>(report: &'report AddReport, origin: &Origin) -> &'report scry::AddResult {
+    let Some(result) = report
+        .items()
+        .iter()
+        .find(|result| result.origin() == origin)
+    else {
+        unreachable!("the report has no item for {origin}")
+    };
+    result
 }
 
 fn searched(store: &Store, seams: &mut Seams, asking: &str, count: usize) -> Vec<Hit> {
@@ -473,4 +501,210 @@ fn the_age_an_agent_judges_is_the_one_its_add_named() {
         unreachable!()
     };
     assert!(provenance.expired(past));
+}
+
+#[test]
+fn a_set_upserts_each_origin_in_canonical_order_and_leaves_omitted_origins() {
+    let mut seams = seams();
+    let directory = directory("set-order");
+    let store = opened(&directory, seams.embed.model());
+    let first = written(
+        &directory,
+        "first.md",
+        long("the tide pool holds anemones").as_bytes(),
+    );
+    let second = written(
+        &directory,
+        "second.md",
+        long("the locomotive raises boiler pressure").as_bytes(),
+    );
+    let omitted = written(
+        &directory,
+        "omitted.md",
+        long("the orchard grows apples in spring").as_bytes(),
+    );
+    let origins =
+        std::collections::BTreeSet::from([first.clone(), second.clone(), omitted.clone()]);
+    let report = add_report(&store, &mut seams, &origins, TTL);
+
+    let reported = report
+        .items()
+        .iter()
+        .map(|item| item.origin().to_string())
+        .collect::<Vec<_>>();
+    let mut expected = reported.clone();
+    expected.sort();
+    assert_eq!(reported, expected);
+    assert!(
+        report
+            .items()
+            .iter()
+            .all(|item| matches!(item.outcome(), AddOutcome::Upserted))
+    );
+
+    for asking in ["anemones", "boiler pressure", "apples in spring"] {
+        let hits = searched(&store, &mut seams, asking, 20);
+        assert!(
+            hits.iter()
+                .any(|hit| hit.passage().text().as_str().contains(asking))
+        );
+    }
+
+    let replacement = written(
+        &directory,
+        "first.md",
+        long("the tide pool now shelters limpets").as_bytes(),
+    );
+    assert_eq!(replacement, first);
+    let replacement_origins = std::collections::BTreeSet::from([first.clone()]);
+    let replacement_report = add_report(&store, &mut seams, &replacement_origins, TTL);
+    assert!(matches!(
+        result_for(&replacement_report, &first).outcome(),
+        AddOutcome::Upserted
+    ));
+    let omitted_hits = searched(&store, &mut seams, "apples in spring", 20);
+    assert!(
+        omitted_hits
+            .iter()
+            .any(|hit| hit.passage().handle().chunk().origin() == &omitted)
+    );
+}
+
+#[test]
+fn an_empty_set_returns_an_empty_report() {
+    let mut seams = seams();
+    let directory = directory("set-empty");
+    let store = opened(&directory, seams.embed.model());
+    let origins = std::collections::BTreeSet::new();
+    let report = add_report(&store, &mut seams, &origins, TTL);
+    assert!(report.items().is_empty());
+    assert!(searched(&store, &mut seams, ASKING, 3).is_empty());
+}
+
+#[test]
+fn a_set_continues_after_refusals_and_preserves_an_existing_member() {
+    let mut seams = seams();
+    let directory = directory("set-refusals");
+    let store = opened(&directory, seams.embed.model());
+    let held_origin = written(
+        &directory,
+        "held.md",
+        long("the held document remains available").as_bytes(),
+    );
+    added(&store, &mut seams, &held_origin);
+    let old_handle = searched(&store, &mut seams, "held document", 10)
+        .into_iter()
+        .find(|hit| hit.passage().handle().chunk().origin() == &held_origin)
+        .map(|hit| hit.passage().handle().clone());
+    let Some(old_handle) = old_handle else {
+        unreachable!("the held document was not searchable")
+    };
+    let Ok(()) = fs::remove_file(directory.join("held.md")) else {
+        unreachable!()
+    };
+    let not_text = written(&directory, "picture.bin", &[0xff, 0xfe, 0x00, 0x80]);
+    let valid = written(
+        &directory,
+        "valid.md",
+        long("the valid document is searchable").as_bytes(),
+    );
+    let origins =
+        std::collections::BTreeSet::from([held_origin.clone(), not_text.clone(), valid.clone()]);
+    let report = add_report(&store, &mut seams, &origins, TTL);
+
+    assert!(matches!(
+        result_for(&report, &held_origin).outcome(),
+        AddOutcome::Refused(AddRefusal::NotFound(origin)) if origin == &held_origin
+    ));
+    assert!(matches!(
+        result_for(&report, &not_text).outcome(),
+        AddOutcome::Refused(AddRefusal::NotText(origin)) if origin == &not_text
+    ));
+    assert!(matches!(
+        result_for(&report, &valid).outcome(),
+        AddOutcome::Upserted
+    ));
+    assert_eq!(traced(&store, &old_handle).chunk().origin(), &held_origin);
+    assert!(
+        searched(&store, &mut seams, "valid document", 20)
+            .iter()
+            .any(|hit| hit.passage().handle().chunk().origin() == &valid)
+    );
+}
+
+#[test]
+fn a_set_applies_one_ttl_and_records_each_fetch_time() {
+    let mut seams = seams();
+    let directory = directory("set-age");
+    let store = opened(&directory, seams.embed.model());
+    let first = written(
+        &directory,
+        "first.md",
+        long("the first fetched document").as_bytes(),
+    );
+    let second = written(
+        &directory,
+        "second.md",
+        long("the second fetched document").as_bytes(),
+    );
+    let origins = std::collections::BTreeSet::from([first.clone(), second.clone()]);
+    let ttl = Duration::from_secs(17);
+    let before = SystemTime::now();
+    let report = add_report(&store, &mut seams, &origins, ttl);
+    let after = SystemTime::now();
+    assert!(
+        report
+            .items()
+            .iter()
+            .all(|item| matches!(item.outcome(), AddOutcome::Upserted))
+    );
+
+    for asking in ["first fetched document", "second fetched document"] {
+        let Some(hit) = searched(&store, &mut seams, asking, 20)
+            .into_iter()
+            .find(|hit| hit.passage().text().as_str().contains(asking))
+        else {
+            unreachable!("{asking} was not searchable")
+        };
+        let provenance = traced(&store, hit.passage().handle());
+        assert!(provenance.fetched_at() >= before);
+        assert!(provenance.fetched_at() <= after);
+        assert_eq!(provenance.ttl(), ttl);
+    }
+}
+
+#[test]
+fn a_same_content_refresh_preserves_an_old_handle() {
+    let mut seams = seams();
+    let directory = directory("set-refresh-same");
+    let store = opened(&directory, seams.embed.model());
+    let origin = written(
+        &directory,
+        "refresh.md",
+        long("the same source remains stable").as_bytes(),
+    );
+    added(&store, &mut seams, &origin);
+    let Some(handle) = searched(&store, &mut seams, "source remains stable", 10)
+        .into_iter()
+        .find(|hit| hit.passage().handle().chunk().origin() == &origin)
+        .map(|hit| hit.passage().handle().clone())
+    else {
+        unreachable!("the source was not searchable")
+    };
+    let Some(path) = origin.as_path() else {
+        unreachable!("the refresh origin is not a path")
+    };
+    let Ok(same) = fs::read(path) else {
+        unreachable!("the refresh source could not be read")
+    };
+    let Ok(()) = fs::write(path, same) else {
+        unreachable!()
+    };
+    let origins = std::collections::BTreeSet::from([origin.clone()]);
+    let report = add_report(&store, &mut seams, &origins, TTL);
+    assert!(matches!(
+        result_for(&report, &origin).outcome(),
+        AddOutcome::Upserted
+    ));
+    assert_eq!(traced(&store, &handle).chunk().origin(), &origin);
 }
