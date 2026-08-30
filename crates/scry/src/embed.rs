@@ -139,7 +139,17 @@ impl Embed {
     /// The inference session, which is weather; and text longer than the
     /// model accepts, which would otherwise be answered with an embedding of
     /// its beginning.
+    #[cfg(test)]
     pub(crate) fn passages(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
+        self.validated_many(texts)
+    }
+
+    /// Embeds passage text already cut by [`Slice`](crate::Slice).
+    ///
+    /// The slicer has already bounded each passage to the model's window, so
+    /// repeating the limit validation here would tokenize every passage twice
+    /// before fastembed tokenizes it for inference.
+    pub(crate) fn passages_from_slice(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
         self.many(texts)
     }
 
@@ -156,15 +166,19 @@ impl Embed {
     }
 
     fn one(&mut self, text: &str) -> io::Result<Embedding> {
-        self.many(&[text])?
+        self.validated_many(&[text])?
             .pop()
             .ok_or_else(|| io::Error::other("the model returned no vector"))
     }
 
-    fn many(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
+    fn validated_many(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
         for text in texts {
             self.whole(text)?;
         }
+        self.many(texts)
+    }
+
+    fn many(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
         let input_bytes = texts
             .iter()
             .try_fold(0usize, |total, text| total.checked_add(text.len()));

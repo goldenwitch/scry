@@ -14,19 +14,22 @@ mod workload;
 
 const USAGE: &str = "usage:
     scry-benchmarks [--cache PATH] [--model PATH] [--output PATH] [--check PATH]
+                    [--add-only]
                     [--prepare-cache]
 				   [--batch-size N] [--sequence-length N]
 
 The v1 baseline is fixed to batch size 1 and sequence length 32.
 The model path defaults to PATH/<pinned-revision>/model.onnx under the cache.
 The cache defaults to SCRY_MODEL_CACHE or the system temporary directory.
-The output defaults to benchmarks/baseline-v1.json.";
+The output defaults to benchmarks/baseline-v1.json.
+--add-only runs the diagnostic add workload matrix and writes no artifact.";
 
 struct Options {
     cache: PathBuf,
     model: Option<PathBuf>,
     output: PathBuf,
     check: Option<PathBuf>,
+    add_only: bool,
     prepare_cache: bool,
     batch_size: u64,
     sequence_length: u64,
@@ -54,6 +57,11 @@ fn run() -> Result<(), String> {
         })?;
         verify_model_cache(&options.cache)?;
         println!("prepared {}", options.cache.display());
+        return Ok(());
+    }
+    if options.add_only {
+        verify_model_cache(&options.cache)?;
+        workload::run_add_only(&options.cache)?;
         return Ok(());
     }
     let model_path = options.model.clone().unwrap_or_else(|| {
@@ -100,6 +108,7 @@ fn parse_options() -> Result<Option<Options>, String> {
     let mut model = None;
     let mut output = PathBuf::from("benchmarks/baseline-v1.json");
     let mut check = None;
+    let mut add_only = false;
     let mut prepare_cache = false;
     let mut batch_size = 1;
     let mut sequence_length = 32;
@@ -110,6 +119,7 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--model" => model = Some(PathBuf::from(required(&mut arguments, "model")?)),
             "--output" => output = PathBuf::from(required(&mut arguments, "output")?),
             "--check" => check = Some(PathBuf::from(required(&mut arguments, "check")?)),
+            "--add-only" => add_only = true,
             "--prepare-cache" => prepare_cache = true,
             "--batch-size" => {
                 batch_size = positive(&required(&mut arguments, "batch-size")?, "batch-size")?;
@@ -131,6 +141,7 @@ fn parse_options() -> Result<Option<Options>, String> {
         model,
         output,
         check,
+        add_only,
         prepare_cache,
         batch_size,
         sequence_length,
