@@ -32,6 +32,30 @@ pub struct Slice {
     budget: NonZeroUsize,
 }
 
+/// Text and the bounded spans cut from that exact text.
+///
+/// Only [`Slice::cut`] can create this value, so the embedding seam can accept
+/// it without reopening the model-limit check or pairing spans with another
+/// text by convention.
+pub(crate) struct SlicedText {
+    text: Text,
+    spans: Vec<Span>,
+}
+
+impl SlicedText {
+    pub(crate) fn passages(&self) -> io::Result<Vec<&str>> {
+        self.spans
+            .iter()
+            .map(|span| self.text.at(*span))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| io::Error::other("a span of the sliced text does not read"))
+    }
+
+    pub(crate) fn into_parts(self) -> (Text, Vec<Span>) {
+        (self.text, self.spans)
+    }
+}
+
 impl Slice {
     /// Builds the seam from the model `embed` is bound to.
     ///
@@ -64,6 +88,15 @@ impl Slice {
             .and_then(NonZeroUsize::new)
             .ok_or_else(|| io::Error::other("the tokenizer's own tokens fill the window"))?;
         Ok(Self { tokenizer, budget })
+    }
+
+    /// Takes ownership of text and returns its bounded, paired spans.
+    ///
+    /// The owner keeps the text beside the spans until embedding is complete,
+    /// so a caller cannot hand the embedding seam an unrelated string slice.
+    pub(crate) fn cut(&self, text: Text) -> io::Result<SlicedText> {
+        let spans = self.spans(&text)?;
+        Ok(SlicedText { text, spans })
     }
 
     /// Cuts `text` into the spans that partition it.

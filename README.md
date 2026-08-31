@@ -21,6 +21,27 @@ The connected MCP harness discovers the server's available capabilities and
 their input and output shapes at runtime. This README covers the product and
 server setup; capability details belong to MCP discovery.
 
+## Latest CI benchmark
+
+The latest successful [CI run](https://github.com/goldenwitch/scry/actions/runs/33341627728)
+at commit `bfd564e` matched the pinned [v1 benchmark artifact](benchmarks/baseline-v1.json).
+These are algorithmic work and logical-resource reference values, not machine-speed
+scores or elapsed-time claims:
+
+| Measure | Last CI value |
+| --- | ---: |
+| Static MatMul work | `688,914,432` MACs |
+| Static FMA work | `1,377,828,864` FMA FLOPs |
+| Sliced spans | `10` |
+| Embedding calls / vectors | `3 / 11` |
+| Redb writes / reads | `3 / 4` |
+| Add members: upserted / refused | `3: 2 / 1` |
+| Owned logical-byte high-water | `13,343 bytes` |
+
+The runtime rows come from the mixed v1 workload, which also exercises search,
+neighbours, provenance, and delete. The add-only diagnostic matrix and its
+interpretation are recorded in [performance.md](performance.md).
+
 ## Solve common problems
 
 ### Compare a collection of papers
@@ -82,6 +103,7 @@ file was created by a compatible scry build.
 
 ## Links
 
+- [Contributing](CONTRIBUTING.md)
 - [Harness setup](docs/harness-support.md)
 - [VS Code MCP configuration](.vscode/mcp.json)
 - [Benchmark interpretation](docs/benchmarks.md)

@@ -1,4 +1,9 @@
 //! Machine-agnostic baseline artifact runner for scry.
+//!
+//! The normal mode builds the static Grimoire analysis and the mixed v1
+//! runtime workload. `--add-only` is a separate local diagnostic mode for
+//! `Store::add`; it intentionally writes no artifact and does not alter the
+//! CI baseline.
 
 use std::env;
 use std::fs;
@@ -14,19 +19,22 @@ mod workload;
 
 const USAGE: &str = "usage:
     scry-benchmarks [--cache PATH] [--model PATH] [--output PATH] [--check PATH]
+                    [--add-only]
                     [--prepare-cache]
 				   [--batch-size N] [--sequence-length N]
 
 The v1 baseline is fixed to batch size 1 and sequence length 32.
 The model path defaults to PATH/<pinned-revision>/model.onnx under the cache.
 The cache defaults to SCRY_MODEL_CACHE or the system temporary directory.
-The output defaults to benchmarks/baseline-v1.json.";
+The output defaults to benchmarks/baseline-v1.json.
+--add-only runs the diagnostic add workload matrix and writes no artifact.";
 
 struct Options {
     cache: PathBuf,
     model: Option<PathBuf>,
     output: PathBuf,
     check: Option<PathBuf>,
+    add_only: bool,
     prepare_cache: bool,
     batch_size: u64,
     sequence_length: u64,
@@ -45,6 +53,8 @@ fn run() -> Result<(), String> {
         println!("{USAGE}");
         return Ok(());
     };
+    // Cache preparation is the one explicit network-capable operation. All
+    // later modes require the verified pinned files to already be present.
     if options.prepare_cache {
         Embed::load(&options.cache).map_err(|error| {
             format!(
@@ -54,6 +64,13 @@ fn run() -> Result<(), String> {
         })?;
         verify_model_cache(&options.cache)?;
         println!("prepared {}", options.cache.display());
+        return Ok(());
+    }
+    // Keep add-only measurements out of model loading, static graph analysis,
+    // and artifact serialization so their collection boundary stays clear.
+    if options.add_only {
+        verify_model_cache(&options.cache)?;
+        workload::run_add_only(&options.cache)?;
         return Ok(());
     }
     let model_path = options.model.clone().unwrap_or_else(|| {
@@ -74,6 +91,8 @@ fn run() -> Result<(), String> {
     if config.batch_size != 1 || config.sequence_length != 32 {
         return Err("v1 baseline requires batch size 1 and sequence length 32".to_owned());
     }
+    // The artifact path deliberately performs static analysis before the
+    // mixed runtime workload; the two evidence layers remain separate.
     let static_model =
         bridge::build_static_model(&model_bytes, config).map_err(|error| error.to_string())?;
     let workload = workload::run(&options.cache)?;
@@ -100,6 +119,7 @@ fn parse_options() -> Result<Option<Options>, String> {
     let mut model = None;
     let mut output = PathBuf::from("benchmarks/baseline-v1.json");
     let mut check = None;
+    let mut add_only = false;
     let mut prepare_cache = false;
     let mut batch_size = 1;
     let mut sequence_length = 32;
@@ -110,6 +130,7 @@ fn parse_options() -> Result<Option<Options>, String> {
             "--model" => model = Some(PathBuf::from(required(&mut arguments, "model")?)),
             "--output" => output = PathBuf::from(required(&mut arguments, "output")?),
             "--check" => check = Some(PathBuf::from(required(&mut arguments, "check")?)),
+            "--add-only" => add_only = true,
             "--prepare-cache" => prepare_cache = true,
             "--batch-size" => {
                 batch_size = positive(&required(&mut arguments, "batch-size")?, "batch-size")?;
@@ -131,6 +152,7 @@ fn parse_options() -> Result<Option<Options>, String> {
         model,
         output,
         check,
+        add_only,
         prepare_cache,
         batch_size,
         sequence_length,

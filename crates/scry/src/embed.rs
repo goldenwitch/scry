@@ -16,6 +16,7 @@ use crate::embedding::Embedding;
 use crate::limit::Limit;
 use crate::model::Model;
 use crate::query::Query;
+use crate::slice::SlicedText;
 use crate::vector::Vector;
 
 /// The repository the weights come from: the ONNX export of
@@ -139,8 +140,21 @@ impl Embed {
     /// The inference session, which is weather; and text longer than the
     /// model accepts, which would otherwise be answered with an embedding of
     /// its beginning.
+    #[cfg(test)]
     pub(crate) fn passages(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
-        self.many(texts)
+        self.validated_many(texts)
+    }
+
+    /// Embeds text and bounded passages produced by [`Slice`](crate::Slice).
+    ///
+    /// The paired value preserves the slicer's model-limit guarantee without
+    /// copying the document text or accepting an unchecked string slice.
+    pub(crate) fn passages_from_slice(
+        &mut self,
+        sliced: &SlicedText,
+    ) -> io::Result<Vec<Embedding>> {
+        let passages = sliced.passages()?;
+        self.many(&passages)
     }
 
     /// Embeds a query, which takes the model's instruction prefix.
@@ -156,15 +170,19 @@ impl Embed {
     }
 
     fn one(&mut self, text: &str) -> io::Result<Embedding> {
-        self.many(&[text])?
+        self.validated_many(&[text])?
             .pop()
             .ok_or_else(|| io::Error::other("the model returned no vector"))
     }
 
-    fn many(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
+    fn validated_many(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
         for text in texts {
             self.whole(text)?;
         }
+        self.many(texts)
+    }
+
+    fn many(&mut self, texts: &[&str]) -> io::Result<Vec<Embedding>> {
         let input_bytes = texts
             .iter()
             .try_fold(0usize, |total, text| total.checked_add(text.len()));

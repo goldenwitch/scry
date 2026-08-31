@@ -32,6 +32,82 @@ runner property enters the artifact. CI prepares the cache before the test and
 comparison steps, so the benchmark gate does not depend on test ordering to
 populate its inputs.
 
+## Choose a mode
+
+Use `--prepare-cache` once when the pinned model files are absent. It is the
+only network-capable mode. Use `--output` when deliberately regenerating the
+committed artifact after an implementation, model, graph, workload, or cost
+model change. Use `--check` for routine review and CI; it regenerates in
+memory, compares exact text, and never overwrites the reference.
+
+For a local add-performance iteration, use the diagnostic workload instead of
+the mixed v1 artifact workload:
+
+```text
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --add-only
+```
+
+`--add-only` loads the pinned model once, prepares each local case outside the
+measurement boundary, and collects only the call to `Store::add`. It reports
+five fixed cases: an empty set, a short singleton, a multi-span singleton, a
+valid multi-member set, and a valid-plus-refused member set. Compare case
+fingerprints and exact logical counts first. The per-stage nanosecond values
+are local diagnostics: repeat the same warm-cache case under the same process
+conditions before using them to choose an optimization, and do not promote
+them to a CI gate.
+
+The add-only command writes no artifact and does not replace the Grimoire v1
+check. Run `--check benchmarks/baseline-v1.json` separately when a change also
+needs to prove that static graph and mixed-workload identity stayed intact.
+
+On a memory-constrained development machine, compilation and test concurrency
+may be reduced with `CARGO_BUILD_JOBS=1`, `CARGO_INCREMENTAL=0`, and
+`RUST_TEST_THREADS=1`. These are operational settings only; they do not enter
+the benchmark identity or any reported gate value.
+
+## For patch authors
+
+Start by naming the boundary your patch changes:
+
+- Changes to `fetch`, `slice`, `embed`, `add`, record encoding, or store writes
+  use `--add-only` first. Compare the same case fingerprint and exact logical
+  counts before looking at timing.
+- Changes to the ONNX parser, shape propagation, Grimoire bridge, cost model,
+  pinned model, or workload identity use the normal artifact command and
+  inspect the canonical description, axes, shapes, operator groups, and named
+  cost reports.
+- Changes to benchmark instrumentation must remain behind
+  `benchmark-instrumentation`, keep one owner per counter, and prove that the
+  normal `scry` build has no collector state or changed product behavior.
+
+For an add-path patch, use this sequence:
+
+1. Prepare or verify the pinned cache.
+2. Run `--add-only` with a warm cache. Keep model loading, store setup, and
+   temporary file creation outside the measured region.
+3. Check fingerprints, source bytes, spans, embedding calls and vectors,
+   writes, and add outcomes. These should remain exact for an unchanged case.
+4. Repeat timing samples under the same process conditions. Stage nanoseconds
+   locate work; they do not establish a portable speed claim by themselves.
+5. Run `--check benchmarks/baseline-v1.json`. A passing check means the static
+   Grimoire and mixed-workload artifact did not change; it does not replace the
+   add-only evidence.
+
+There is no universal millisecond threshold for “too expensive.” A stable
+increase in deterministic logical work or bytes is a regression unless the
+workload or contract explains it. A timing difference needs comparable sample
+counts and conditions, and should be recorded in `performance.md` before it
+drives an optimization. Elapsed time, RSS, CPU utilization, and hardware
+counters never become CI gates.
+
+Do not rewrite `benchmarks/baseline-v1.json` just because a patch changes a
+number. First determine whether the changed field is static work, a workload
+identity, or an owned runtime observation. An intentional baseline update must
+carry the implementation, model, graph, workload, source-revision, or
+cost-model cause in the same reviewed change. Cross-document embedding,
+grouped persistence, and other changes to set-upsert visibility or failure
+semantics require a separate contract decision and tests.
+
 ## v1 identity
 
 The baseline is one fixed workload:

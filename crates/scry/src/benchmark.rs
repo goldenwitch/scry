@@ -30,6 +30,11 @@ mod active {
         add_uncertain: u64,
         add_not_attempted: u64,
         owned_logical_bytes_high_water: u64,
+        fetch_nanos: u64,
+        slice_nanos: u64,
+        embedding_nanos: u64,
+        record_nanos: u64,
+        commit_nanos: u64,
         overflowed: bool,
     }
 
@@ -158,6 +163,36 @@ mod active {
         #[must_use]
         pub const fn owned_logical_bytes_high_water(&self) -> u64 {
             self.owned_logical_bytes_high_water
+        }
+
+        /// Time spent reading origins, in diagnostic nanoseconds.
+        #[must_use]
+        pub const fn fetch_nanos(&self) -> u64 {
+            self.fetch_nanos
+        }
+
+        /// Time spent slicing documents, in diagnostic nanoseconds.
+        #[must_use]
+        pub const fn slice_nanos(&self) -> u64 {
+            self.slice_nanos
+        }
+
+        /// Time spent embedding passage batches, in diagnostic nanoseconds.
+        #[must_use]
+        pub const fn embedding_nanos(&self) -> u64 {
+            self.embedding_nanos
+        }
+
+        /// Time spent preparing records, in diagnostic nanoseconds.
+        #[must_use]
+        pub const fn record_nanos(&self) -> u64 {
+            self.record_nanos
+        }
+
+        /// Time spent committing records, in diagnostic nanoseconds.
+        #[must_use]
+        pub const fn commit_nanos(&self) -> u64 {
+            self.commit_nanos
         }
 
         /// Whether any counter could not be represented exactly.
@@ -345,6 +380,61 @@ mod active {
             Err(_) => snapshot.overflowed = true,
         });
     }
+
+    pub(super) fn stage_duration(stage: super::Stage, nanos: u128) {
+        update(|snapshot| {
+            let Ok(amount) = u64::try_from(nanos) else {
+                snapshot.overflowed = true;
+                return;
+            };
+            let slot = match stage {
+                super::Stage::Fetch => &mut snapshot.fetch_nanos,
+                super::Stage::Slice => &mut snapshot.slice_nanos,
+                super::Stage::Embedding => &mut snapshot.embedding_nanos,
+                super::Stage::Record => &mut snapshot.record_nanos,
+                super::Stage::Commit => &mut snapshot.commit_nanos,
+            };
+            add(slot, amount, &mut snapshot.overflowed);
+        });
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Stage {
+    Fetch,
+    Slice,
+    Embedding,
+    Record,
+    Commit,
+}
+
+#[cfg(feature = "benchmark-instrumentation")]
+pub(crate) struct StageTimer {
+    stage: Stage,
+    started: std::time::Instant,
+}
+
+#[cfg(not(feature = "benchmark-instrumentation"))]
+pub(crate) struct StageTimer;
+
+#[cfg(feature = "benchmark-instrumentation")]
+pub(crate) fn start_stage(stage: Stage) -> StageTimer {
+    StageTimer {
+        stage,
+        started: std::time::Instant::now(),
+    }
+}
+
+#[cfg(not(feature = "benchmark-instrumentation"))]
+pub(crate) const fn start_stage(_: Stage) -> StageTimer {
+    StageTimer
+}
+
+#[cfg(feature = "benchmark-instrumentation")]
+impl Drop for StageTimer {
+    fn drop(&mut self) {
+        active::stage_duration(self.stage, self.started.elapsed().as_nanos());
+    }
 }
 
 #[cfg(feature = "benchmark-instrumentation")]
@@ -447,12 +537,17 @@ pub(crate) fn record_owned_logical_bytes(amount: usize) {
 pub(crate) const fn record_owned_logical_bytes(_: usize) {}
 
 #[cfg(all(test, feature = "benchmark-instrumentation"))]
+pub(crate) fn record_stage_duration(stage: Stage, nanos: u128) {
+    active::stage_duration(stage, nanos);
+}
+
+#[cfg(all(test, feature = "benchmark-instrumentation"))]
 mod tests {
     use super::{
-        Collector, record_add_member, record_embedding_call, record_embedding_vectors,
+        Collector, Stage, record_add_member, record_embedding_call, record_embedding_vectors,
         record_neighbour_passage, record_owned_logical_bytes, record_provenance_lookup,
         record_read_transaction, record_search_document, record_search_hit, record_sliced_spans,
-        record_source_bytes, record_write_transaction,
+        record_source_bytes, record_stage_duration, record_write_transaction,
     };
 
     #[test]
@@ -493,6 +588,24 @@ mod tests {
     }
 
     #[test]
+    fn stage_durations_are_owned_diagnostics() {
+        let collector = Collector::start();
+        record_stage_duration(Stage::Fetch, 12);
+        record_stage_duration(Stage::Slice, 23);
+        record_stage_duration(Stage::Embedding, 34);
+        record_stage_duration(Stage::Record, 45);
+        record_stage_duration(Stage::Commit, 56);
+        let snapshot = collector.finish();
+
+        assert_eq!(snapshot.fetch_nanos(), 12);
+        assert_eq!(snapshot.slice_nanos(), 23);
+        assert_eq!(snapshot.embedding_nanos(), 34);
+        assert_eq!(snapshot.record_nanos(), 45);
+        assert_eq!(snapshot.commit_nanos(), 56);
+        assert!(!snapshot.overflowed());
+    }
+
+    #[test]
     fn nested_collections_restore_the_outer_collection() {
         let outer = Collector::start();
         record_source_bytes(1);
@@ -510,6 +623,15 @@ mod tests {
         let collector = Collector::start();
         record_source_bytes(usize::MAX);
         record_source_bytes(1);
+        let snapshot = collector.finish();
+        assert!(snapshot.overflowed());
+    }
+
+    #[test]
+    fn stage_duration_overflow_is_reported_in_the_snapshot() {
+        let collector = Collector::start();
+        record_stage_duration(Stage::Fetch, u64::MAX.into());
+        record_stage_duration(Stage::Fetch, 1);
         let snapshot = collector.finish();
         assert!(snapshot.overflowed());
     }

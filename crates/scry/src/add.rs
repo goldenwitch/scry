@@ -99,36 +99,45 @@ fn process_member(
     origin: &Origin,
     ttl: Duration,
 ) -> AddOutcome {
-    let (text, fetched_at) = match fetch(origin) {
-        Ok(read) => read,
-        Err(refusal) => return AddOutcome::Refused(refusal),
+    let (text, fetched_at) = {
+        let _stage = crate::benchmark::start_stage(crate::benchmark::Stage::Fetch);
+        match fetch(origin) {
+            Ok(read) => read,
+            Err(refusal) => return AddOutcome::Refused(refusal),
+        }
     };
-    let spans = match slice.spans(&text) {
-        Ok(spans) => spans,
-        Err(error) => return AddOutcome::Failed(error),
+    let sliced = {
+        let _stage = crate::benchmark::start_stage(crate::benchmark::Stage::Slice);
+        match slice.cut(text) {
+            Ok(sliced) => sliced,
+            Err(error) => return AddOutcome::Failed(error),
+        }
     };
+    let embeddings = {
+        let _stage = crate::benchmark::start_stage(crate::benchmark::Stage::Embedding);
+        match embed.passages_from_slice(&sliced) {
+            Ok(embeddings) => embeddings,
+            Err(error) => return AddOutcome::Failed(error),
+        }
+    };
+    let (text, spans) = sliced.into_parts();
     let Some(document) = Document::new(origin.clone(), text, fetched_at, ttl, spans) else {
         return AddOutcome::Failed(io::Error::other(
             "the text was not cut into a partition of itself",
         ));
     };
-    let Some(passages) = document
-        .spans()
-        .iter()
-        .map(|span| document.text().at(*span))
-        .collect::<Option<Vec<&str>>>()
-    else {
-        return AddOutcome::Failed(io::Error::other("a span of the document does not read"));
+    let prepared = {
+        let _stage = crate::benchmark::start_stage(crate::benchmark::Stage::Record);
+        match store.prepare_replace(&document, &embeddings) {
+            Ok(prepared) => prepared,
+            Err(error) => return AddOutcome::Failed(error),
+        }
     };
-    let embeddings = match embed.passages(&passages) {
-        Ok(embeddings) => embeddings,
-        Err(error) => return AddOutcome::Failed(error),
+    let commit = {
+        let _stage = crate::benchmark::start_stage(crate::benchmark::Stage::Commit);
+        store.commit_replace(&prepared)
     };
-    let prepared = match store.prepare_replace(&document, &embeddings) {
-        Ok(prepared) => prepared,
-        Err(error) => return AddOutcome::Failed(error),
-    };
-    match store.commit_replace(&prepared) {
+    match commit {
         Ok(()) => AddOutcome::Upserted,
         Err(error) => AddOutcome::Uncertain(error),
     }

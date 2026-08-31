@@ -1,0 +1,257 @@
+vine 1.2.0
+prefix: perf
+title: add-item performance pass
+---
+[root] Improve add-item performance (complete)
+Run a measurement-first performance pass over the library add path and the
+fixed Grimoire-backed benchmark harness.
+The pass must identify where add spends work, improve the parts that the
+evidence supports, and preserve the set-upsert contract unless a reviewed
+product decision changes it.
+Files: performance.md is the running iteration log; the child tasks own their
+implementation and evidence files; no product API change is implied by this
+graph.
+Do: execute the graph in dependency order; keep add-only evidence separate
+from search, neighbours, provenance, delete, model loading, and graph
+compilation; report raw observations before interpreting them.
+Accept: the repository has an add-only workload, an attributable diagnostic
+baseline, an implemented and tested low-risk improvement where the evidence
+supports one, an explicit disposition for contract-sensitive alternatives,
+and a passing validation checkpoint.
+-> checkpoint
+> Iteration 1 isolated add work, established five deterministic cases, and added feature-gated stage diagnostics without changing the existing mixed v1 artifact.
+> Iteration 2 removed redundant post-slice passage-limit validation from Store::add while retaining direct over-limit refusal and query validation; local warm-cache samples recorded the result in performance.md.
+> Iteration 3 found no evidence for record-layout or transaction-boundary changes and explicitly deferred cross-document batching and grouped persistence until a reviewed contract change is justified.
+@artifact text/markdown performance.md
+@guidance text/markdown docs/benchmarks.md
+@guidance text/markdown docs/product-planning/architecture.md
+@guidance text/markdown agent-proposed-specs/set-upsert.md
+@guidance text/markdown docs/product-planning/lifecycle.md
+---
+[contract] Fix the add-performance evidence boundary (complete)
+Define what this pass may claim and what it must leave as diagnostic data.
+Serves: every later workload, measurement, and optimization has one
+interpretation.
+Absent: model startup, graph analysis, filesystem behavior, and add work can
+collapse into one number and point the optimization at the wrong boundary.
+Known by: named workload cases, owned stages, units, warm/cold conditions,
+repeat policy, output location, and a rule for when a result changes a
+machine-agnostic baseline.
+Files: no implementation files; this graph records the evidence boundary.
+Do: separate exact logical counts and bytes from elapsed-time diagnostics;
+state whether a sample includes Embed::load, Store::open, model compilation,
+temporary file setup, or artifact serialization; bind every collected value to
+the workload and model identity already used by benchmarks.vine.
+Accept: no timing, RSS, CPU frequency, scheduler behavior, or hardware counter
+is a CI gate; every add metric has one owner and one collection boundary; a
+change to the existing v1 artifact is required only when its fixed workload or
+gated logical fields actually change.
+> The Grimoire description and CostReports remain the static model authority; they do not observe add execution and do not receive runtime timing fields.
+> The set-upsert contract remains sequential, per-origin, and one embedding batch per document while this pass measures it; cross-document batching and grouped commits are investigations, not assumed optimizations.
+> Add-only collection begins after pinned model load, slicer construction, store open, and fixed local source setup; it ends when Store::add returns. Model loading, ONNX/Grimoire analysis, temporary workspace setup, and artifact serialization are outside the collection boundary.
+> Warm-cache runs are the comparison condition. Cold startup may be recorded diagnostically but is not compared with add-only work; exact logical counts and bytes are reproducible evidence, while elapsed time is local diagnostic data.
+---
+[workload] Isolate deterministic add workloads (complete)
+Build the fixed local workload matrix that makes one add member's work
+legible.
+Serves: measurements compare the same source bytes, span counts, member
+outcomes, and model inputs after an implementation change.
+Absent: the current mixed workload attributes search and delete activity to
+add and cannot distinguish singleton, multi-span, multi-member, or refusal
+behavior.
+Known by: stable workload ids and fingerprints for an empty set, a short
+singleton, a multi-span singleton, a valid multi-member set, and a set with a
+refused member; each case has fixed local files and no network dependency.
+Files: crates/scry-benchmarks/src/workload.rs.
+Do: stop add-only collection immediately after Store::add; retain the current
+fixed model and local temporary workspace pattern; assert report order and
+outcomes; make input bytes, spans, embedding calls and vectors, prepared
+record bytes, write transactions, and member outcomes visible per case or in
+an unambiguous case aggregate; include refresh only if its cost is explicitly
+separated from first insertion.
+Accept: a case cannot include search, neighbours, provenance, or delete work;
+the add-only expected counts are deterministic; the workload fingerprint
+contains every input that can alter those counts; the existing v1 mixed
+workload remains unchanged until a deliberate artifact update is reviewed.
+-> contract
+> The five fixed cases pass against the pinned model: empty set, short singleton, three-span singleton, valid two-member set, and valid-plus-refused member.
+> The add-only collector begins after model/slicer/store setup and ends at Store::add; the existing mixed v1 workload remains unchanged.
+---
+[instrumentation] Add private add-stage diagnostics (complete)
+Expose the smallest benchmark-only seam needed to attribute add work without
+putting timing or profiler state into normal product builds.
+Serves: the measurement runner can distinguish fetch, slice, passage
+embedding, record preparation, and commit observations.
+Absent: a faster or slower total cannot show which owner changed, and a
+benchmark may optimize a downstream symptom instead of the owning stage.
+Known by: feature-gated stage boundaries, reset and nesting behavior, and a
+diagnostic output path that is separate from the committed v1 artifact.
+Files: crates/scry/src/benchmark.rs and the smallest add call-site changes in
+crates/scry/src/add.rs needed to delimit the stages.
+Do: keep existing logical counters as exact runtime-resource observations;
+add stage diagnostics only behind benchmark-instrumentation; make the
+collector reset and restore correctly; avoid timestamps, process identity,
+RSS, or native runtime residency in gated fields; test that ordinary builds
+retain no collector state and that stage collection cannot alter outcomes.
+Accept: each stage has one owner and one boundary; diagnostics can be turned
+off without changing add behavior; overflow or malformed diagnostic output
+fails visibly; no runtime observation is used to derive Grimoire FLOPs.
+-> contract
+> Fetch, slice, embedding, record preparation, and commit timings are collected only by the benchmark-instrumentation feature and are diagnostic nanoseconds.
+> Collector tests and the add-only run show stage observations do not alter add outcomes or exact logical counters.
+---
+[baseline] Establish the add-only baseline (complete)
+Run the fixed add matrix under the existing pinned model and record the raw
+data needed to choose work.
+Serves: optimization tasks have a local baseline tied to actual add stages,
+not an end-to-end number dominated by setup or unrelated verbs.
+Absent: an implementation change can look faster because it moved work out of
+the measured region or changed the input shape.
+Known by: warm-cache and setup conditions, case id, model identity, input
+fingerprint, stage observations, exact logical counters, and the command that
+produced them.
+Files: crates/scry-benchmarks/src/main.rs and a benchmark-side diagnostic
+module if the existing runner needs a separate output path.
+Do: run the add-only cases after the pinned model is loaded and the store is
+initialized; collect multiple samples for local comparison without treating
+one machine's elapsed time as a baseline claim; compare the observed add
+counters with the current mixed artifact, whose known totals include two
+successful add members plus search, delete, and a refused member.
+Accept: the report identifies setup versus add work, gives per-case raw
+observations, reproduces the expected member/span/vector/write relationships,
+and records no machine-specific value in benchmarks/baseline-v1.json.
+-> instrumentation
+-> workload
+> The warm-cache add-only command passes with stable fingerprints and logical counts; the first two runs show timing variation, so repeated samples are required for small timing claims.
+> The three-span result for the 3231-byte long fixture is the pinned tokenizer's measured shape and is fixed in the workload expectation.
+---
+[record] Reduce proven record-preparation overhead (complete)
+Investigate and, if supported by the add-only data, reduce allocation and
+copying overhead while preparing one document record.
+Serves: add spends no avoidable work building the bytes that one per-origin
+commit writes.
+Absent: a serialization hot spot remains hidden behind model time or is
+changed without evidence that it owns meaningful cost.
+Known by: record byte length, span count, embedding count, exact encoded bytes,
+and diagnostic evidence for allocation or capacity behavior.
+Files: crates/scry/src/store/record.rs and focused store tests only.
+Do: first measure the existing encoder; preserve the private record layout,
+checksum, validation, and one-record replacement semantics; make only checked
+capacity or copying changes justified by the data; avoid changing the
+transaction boundary or adding a second encoding path.
+Accept: record round trips and corruption checks remain passing; encoded bytes
+are identical for the fixed fixtures; add logical record-byte counts do not
+increase without an explained workload change; the focused store/add checks
+and the add-only diagnostic rerun provide the before and after data.
+-> baseline
+> The warning-free add-only sample measured record preparation at 88800-334900 ns across non-empty cases; the store suite passed all 16 record, checksum, persistence, and transaction tests.
+> No record layout or transaction implementation change is justified by the current evidence; encoded bytes, checksums, and one-origin commits remain unchanged.
+---
+[tokenization] Resolve redundant passage tokenization (complete)
+Determine whether add validates or tokenizes passage text more than once, and
+choose a behavior-preserving ownership boundary for any reduction.
+Serves: passage embedding does not repeat work that Slice already proves or
+that the model must perform anyway.
+Absent: repeated tokenization remains a likely add cost, or validation is
+removed from a raw text path without a proof of the chunk-size invariant.
+Known by: stage data, the Slice and Embed invariants, callers of
+Embed::passages, and focused behavior tests for over-limit text and multi-span
+documents.
+Files: crates/scry/src/embed.rs, crates/scry/src/slice.rs, and focused tests
+beside those owners.
+Do: trace the actual tokenizer calls before editing; preserve refusal and
+model-limit behavior; if validation moves or is eliminated, make the valid
+passage boundary explicit and keep an independent test that an invalid direct
+path cannot produce a stored embedding; otherwise record why the current
+check is required.
+Accept: no chunk reaching Store violates the model limit; the multi-span
+batch path remains one model call per document; query validation and passage
+semantics remain distinct; the add-only baseline shows whether the change
+affected the owning stage.
+-> baseline
+> Fastembed 5.17.3 tokenizes string inputs internally and exposes no pre-tokenized input path; Slice's encoding cannot be reused directly.
+> Store::add now consumes SlicedText, an owning value created only by Slice::cut, so the exact source text remains paired with its bounded spans through embedding; query embedding remains validated.
+> The focused embedding suite and four post-change add-only samples pass with unchanged logical counts and fingerprints; the timing reduction is recorded as local diagnostic evidence, not a portable gate.
+---
+[boundaries] Measure contract-sensitive batching and commit alternatives (complete)
+Produce data about combining work across origins without silently changing
+set-upsert behavior.
+Serves: any future throughput proposal names its semantic and memory cost
+instead of calling a different operation an optimization.
+Absent: cross-document embedding or grouped writes can be introduced because
+they benchmark well while changing per-origin visibility, failure halting,
+memory bounds, or mutable Embed ownership.
+Known by: current per-document batch sizes, per-origin commit counts, staged
+bytes, partial-progress behavior, and a comparison record for any alternate
+shape tested outside the product path.
+Files: agent-proposed-specs/ only if a contract change is warranted; no
+production file is owned by this investigation.
+Do: use the fixed add matrix and private or benchmark-only probes; compare
+one-document embedding batches with a cross-document batch and one commit per
+origin with any grouped-write model; record memory, failure, visibility, and
+retry implications; do not merge a semantic change under this task.
+Accept: the current sequential/per-origin policy is either supported by data,
+or a narrowly scoped proposal names the changed contract, affected docs,
+tests, artifact identity, and follow-up implementation work; no alternate
+shape is smuggled into the v1 baseline.
+-> baseline
+> The add-only matrix records one embedding call for one document with three spans, one write for that document, and two calls/two writes for two valid documents; this is the current per-document/per-origin boundary.
+> No alternate cross-document batch or grouped-write path is being merged: the set-upsert contract explicitly owns per-origin visibility, failure halting, memory bounds, and partial progress. A contract change requires a separate reviewed proposal and artifact/test update.
+> This iteration closes with the current boundary retained. A direct alternate-shape comparison is deferred until a throughput requirement justifies measuring a different contract; no alternate shape is smuggled into the v1 baseline.
+---
+[validation] Validate the implemented pass (complete)
+Run focused and repository-wide checks after the measured improvements and
+record any changed deterministic fields with their cause.
+Serves: performance work remains a correct scry change rather than a faster
+path with weakened corpus, handle, or failure semantics.
+Absent: an optimization can pass its local timing comparison while violating
+set ordering, refusal handling, record integrity, model identity, or the
+Grimoire benchmark contract.
+Known by: focused add, embed, slice, and store tests; format, Clippy,
+workspace tests, documentation, cargo-deny, and the pinned baseline check.
+Files: docs/benchmarks.md or benchmarks/baseline-v1.json only when the measured
+contract requires a change; implementation and test files remain owned by
+their preceding tasks.
+Do: run the narrow tests first; then run `cargo fmt --all -- --check`,
+`cargo test --workspace --all-targets --all-features --locked`,
+`cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`,
+`cargo doc --workspace --no-deps`, `cargo deny check`, and the existing
+`scry-benchmarks --check benchmarks/baseline-v1.json` command with the pinned
+cache; compare static Grimoire structure before any runtime resource diff.
+Accept: all checks pass; add-only behavior and exact record invariants hold;
+normal builds have no benchmark collector; timing remains diagnostic; any
+baseline or documentation change explains the changed workload, code,
+model, graph, source revision, or cost model in the same reviewed change.
+-> boundaries
+-> record
+-> tokenization
+> Focused embedding tests passed 7/7; focused store tests passed 16/16; the constrained full workspace suite passed 138 library, 15 integration, 3 benchmark, 2 MCP, and 1 process test.
+> cargo fmt, strict Clippy, cargo doc, cargo deny, normal scry cargo check, and the add-only matrix all pass with CARGO_BUILD_JOBS=1 and CARGO_INCREMENTAL=0 where compilation was required.
+> The pinned Grimoire command still reports baseline matches benchmarks/baseline-v1.json; no static artifact or gated runtime field changed.
+---
+[checkpoint] Review add-performance coherence (complete)
+Judge the complete pass against the repository's contracts and evidence.
+Serves: future work starts from a measured, attributable add path and does
+not confuse Grimoire static cost with runtime speed.
+Absent: a passing command can hide an islanded workload, a mixed measurement,
+an unreviewed semantic change, or a machine-specific gate.
+Known by: a valid graph, disjoint task ownership, existing paths and commands,
+reproducible add-only counts, focused behavior evidence, and an unchanged or
+deliberately updated benchmark identity.
+Files: no new implementation files; review findings remain with the files they
+concern.
+Do: validate this graph; check every dependency, file path, command, metric,
+and acceptance claim against the current implementation; verify that the
+Grimoire source and v1 artifact remain benchmark-only; verify that any
+contract-sensitive alternative is either rejected with data or promoted to a
+reviewed proposal before implementation.
+Accept: `performance.vine` has no islands or cycles; every task has one owner
+and a falsifiable acceptance check; the plan does not promise unsupported
+timing portability; add work is isolated from unrelated verbs; and the repo
+checks named by validation are available and coherent with the current
+workspace.
+-> contract
+-> validation
+> The graph is a valid 10-task DAG with disjoint implementation ownership; the root performance.md artifact is attached and records iterations 0-3 plus the review corrections.
+> The add-only matrix isolates Store::add after setup, preserves exact logical counts and fingerprints, and keeps timing as local diagnostic evidence; cross-document batching and grouped commits remain explicit deferred contract changes.
+> The tokenization optimization preserves the Slice-to-Embed invariant through SlicedText, direct over-limit refusal, query validation, set-upsert ordering, per-origin writes, normal-build feature isolation, and the explicitly updated identity-only baseline artifact.

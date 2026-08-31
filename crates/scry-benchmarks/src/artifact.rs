@@ -1,3 +1,9 @@
+//! Deterministic serialization for static Grimoire and runtime benchmark data.
+//!
+//! Static cost reports and runtime boundary observations are kept as separate
+//! artifact layers. This module validates and serializes them; it does not
+//! collect timings or infer costs from runtime events.
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
@@ -12,6 +18,7 @@ use crate::bridge::{
     BridgeConfig, GRIMOIRE_REVISION, GRIMOIRE_SOURCE, MODEL_DIMENSION, MODEL_LIMIT, MODEL_NAME,
     MODEL_REPOSITORY, MODEL_REVISION, StaticModel, WINDOW,
 };
+use crate::workload::WORKLOAD_ID;
 
 pub(crate) const ARTIFACT_SCHEMA: &str = "scry-benchmark-v1";
 pub(crate) const COST_MODEL_VERSION: &str = "cost-model-v1";
@@ -170,7 +177,7 @@ pub(crate) fn build_artifact(
     Ok(BaselineArtifact {
         schema: ARTIFACT_SCHEMA,
         identity: Identity {
-            workload_id: "bge-small-onnx-b1-s32",
+            workload_id: WORKLOAD_ID,
             input_fingerprint,
             model: ModelIdentity {
                 name: MODEL_NAME,
