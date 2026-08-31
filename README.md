@@ -23,8 +23,8 @@ server setup; capability details belong to MCP discovery.
 
 ## Latest CI benchmark
 
-The latest successful [CI run](https://github.com/goldenwitch/scry/actions/runs/33341193878)
-at commit `58b310a` matched the pinned [v1 benchmark artifact](benchmarks/baseline-v1.json).
+The latest successful [CI run](https://github.com/goldenwitch/scry/actions/runs/33341627728)
+at commit `bfd564e` matched the pinned [v1 benchmark artifact](benchmarks/baseline-v1.json).
 These are algorithmic work and logical-resource reference values, not machine-speed
 scores or elapsed-time claims:
 
@@ -103,6 +103,7 @@ file was created by a compatible scry build.
 
 ## Links
 
+- [Contributing](CONTRIBUTING.md)
 - [Harness setup](docs/harness-support.md)
 - [VS Code MCP configuration](.vscode/mcp.json)
 - [Benchmark interpretation](docs/benchmarks.md)
