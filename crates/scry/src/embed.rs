@@ -39,6 +39,13 @@ const DIMENSION: usize = 384;
 /// The most input it accepts, in tokens.
 const LIMIT: usize = 512;
 
+/// The internal fastembed batch size whose raw outputs are retained by one
+/// embedding call until pooling completes.
+const FASTEMBED_BATCH_SIZE: usize = 256;
+
+/// The passage batch sent through one fastembed call.
+pub const PASSAGE_MICROBATCH_SIZE: usize = 32;
+
 /// What a query is prefixed with, from the model list table on the BAAI model
 /// card. A passage takes no prefix.
 const QUERY_PREFIX: &str = "Represent this sentence for searching relevant passages: ";
@@ -115,6 +122,36 @@ impl Embed {
         })
     }
 
+    /// Returns the padded sequence length the model tokenizer assigns to a
+    /// benchmark batch without running inference.
+    ///
+    /// # Errors
+    ///
+    /// The pinned tokenizer refusing a passage or the batch containing no
+    /// passages.
+    #[cfg(feature = "benchmark-instrumentation")]
+    pub fn benchmark_padded_sequence_length(&self, texts: &[String]) -> io::Result<usize> {
+        let inputs = texts.iter().map(String::as_str).collect::<Vec<_>>();
+        let encodings = self
+            .embedder
+            .tokenizer
+            .encode_batch(inputs, true)
+            .map_err(io::Error::other)?;
+        if encodings
+            .iter()
+            .any(|encoding| !encoding.get_overflowing().is_empty())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a benchmark passage is longer than the model accepts",
+            ));
+        }
+        let Some(encoding) = encodings.first() else {
+            return Err(io::Error::other("the benchmark passage batch was empty"));
+        };
+        Ok(encoding.len())
+    }
+
     /// The model these embeddings are frozen to.
     #[must_use]
     pub const fn model(&self) -> &Model {
@@ -148,13 +185,18 @@ impl Embed {
     /// Embeds text and bounded passages produced by [`Slice`](crate::Slice).
     ///
     /// The paired value preserves the slicer's model-limit guarantee without
-    /// copying the document text or accepting an unchecked string slice.
+    /// copying the document text or accepting an unchecked string slice. Each
+    /// microbatch is pooled before the next one is sent to fastembed.
     pub(crate) fn passages_from_slice(
         &mut self,
         sliced: &SlicedText,
     ) -> io::Result<Vec<Embedding>> {
         let passages = sliced.passages()?;
-        self.many(&passages)
+        let mut embeddings = Vec::with_capacity(passages.len());
+        for microbatch in passages.chunks(PASSAGE_MICROBATCH_SIZE) {
+            embeddings.extend(self.many(microbatch)?);
+        }
+        Ok(embeddings)
     }
 
     /// Embeds a query, which takes the model's instruction prefix.
@@ -190,7 +232,12 @@ impl Embed {
             return Err(io::Error::other("embedding input byte count overflowed"));
         };
         crate::benchmark::record_embedding_call(input_bytes);
-        let values = self.embedder.embed(texts, None).map_err(io::Error::other)?;
+        crate::benchmark::record_embedding_call_size(texts.len());
+        crate::benchmark::record_embedding_batches(texts.len().div_ceil(FASTEMBED_BATCH_SIZE));
+        let values = self
+            .embedder
+            .embed(texts, Some(FASTEMBED_BATCH_SIZE))
+            .map_err(io::Error::other)?;
         crate::benchmark::record_embedding_vectors(values.len());
         crate::benchmark::record_owned_logical_bytes(input_bytes);
         values
@@ -296,10 +343,12 @@ fn download(remote: &str, size: u64) -> io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "benchmark-instrumentation")]
+    use super::PASSAGE_MICROBATCH_SIZE;
     use super::{DIMENSION, Embed, LIMIT, QUERY_PREFIX, model};
     use crate::embedding::Embedding;
     use crate::query::Query;
-    use crate::scaffold::embed;
+    use crate::scaffold::{embed, seams};
     use crate::score::Score;
     use crate::text::Text;
 
@@ -371,6 +420,85 @@ mod tests {
         let mut embed = embed();
         let long = long(2000);
         assert!(embed.passages(&["The kettle is on.", &long]).is_err());
+    }
+
+    #[cfg(feature = "benchmark-instrumentation")]
+    #[test]
+    fn a_large_sliced_batch_is_split_before_embedding() {
+        let (mut embed, slice) = seams();
+        let Ok(sliced) = slice.cut(Text::from(long(9000))) else {
+            unreachable!()
+        };
+        let passage_count = match sliced.passages() {
+            Ok(passages) => passages.len(),
+            Err(error) => unreachable!("{error}"),
+        };
+        let collector = crate::BenchmarkCollector::start();
+        let embeddings = match embed.passages_from_slice(&sliced) {
+            Ok(embeddings) => embeddings,
+            Err(error) => unreachable!("{error}"),
+        };
+        let snapshot = collector.finish();
+        assert_eq!(embeddings.len(), passage_count);
+        assert_eq!(
+            snapshot.embedding_calls(),
+            passage_count.div_ceil(PASSAGE_MICROBATCH_SIZE) as u64
+        );
+        assert_eq!(snapshot.embedding_batches(), snapshot.embedding_calls());
+        assert_eq!(
+            snapshot.max_embedding_call_size(),
+            passage_count.min(PASSAGE_MICROBATCH_SIZE) as u64
+        );
+    }
+
+    #[cfg(feature = "benchmark-instrumentation")]
+    #[test]
+    fn a_sliced_batch_preserves_passage_order_and_values() {
+        let (mut embed, slice) = seams();
+        let Ok(sliced) = slice.cut(Text::from(long(9000))) else {
+            unreachable!()
+        };
+        let passages = match sliced.passages() {
+            Ok(passages) => passages,
+            Err(error) => unreachable!("{error}"),
+        };
+        let actual = match embed.passages_from_slice(&sliced) {
+            Ok(embeddings) => embeddings,
+            Err(error) => unreachable!("{error}"),
+        };
+        let mut expected = Vec::with_capacity(passages.len());
+        for text in passages {
+            let Ok(embedding) = passage(&mut embed, text) else {
+                unreachable!()
+            };
+            expected.push(embedding);
+        }
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+            assert_eq!(actual.model(), expected.model());
+            let maximum_delta = actual
+                .vector()
+                .as_slice()
+                .iter()
+                .zip(expected.vector().as_slice())
+                .map(|(actual, expected)| (actual - expected).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(
+                maximum_delta <= 1e-5,
+                "embedding {index} changed by {maximum_delta}"
+            );
+        }
+    }
+
+    #[cfg(feature = "benchmark-instrumentation")]
+    #[test]
+    fn benchmark_shape_refuses_a_passage_that_would_be_truncated() {
+        let embed = embed();
+        let passages = vec![long(2000)];
+        let Err(error) = embed.benchmark_padded_sequence_length(&passages) else {
+            unreachable!("an over-limit benchmark passage was accepted")
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]

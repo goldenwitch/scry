@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 fn mcp_drives_the_library_from_add_through_gone() -> Result<(), Box<dyn std::error::Error>> {
     let directory = scratch_directory()?;
     let source = directory.join("source.md");
-    let source_text = (0..40)
+    // Large enough to cross the production passage microbatch boundary while
+    // remaining a deterministic local fixture.
+    let source_text = (0..900)
         .map(|line| format!("Paragraph {line}: the tide pool holds anemones and limpets."))
         .collect::<Vec<_>>()
         .join("\n");

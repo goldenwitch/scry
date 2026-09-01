@@ -1,0 +1,413 @@
+vine 1.2.0
+prefix: mem
+title: bounded large-origin embedding and allocation evidence
+---
+[root] Bound large-origin embedding memory (complete)
+Issue #3 reports multi-gigabyte native memory while one large origin is embedded.
+Run the issue sequence in evidence order and give the Grimoire benchmark a
+shape-aware allocation view that can show how an inference microbatch change
+moves logical memory without pretending to predict an OS allocator.
+The plan has three separate evidence layers: deterministic Grimoire-derived
+memory projections, exact scry-owned logical byte observations, and diagnostic
+native process-memory observations. They must not collapse into one score.
+The production fix remains one-origin atomic: all final embeddings for an
+origin are prepared before that origin becomes visible, and cross-origin
+batching is not introduced by this plan.
+Files: memory.vine is the plan; performance.md is the root evidence log for
+this investigation; the child tasks own implementation and evidence files.
+Do: execute the graph in dependency order; keep the existing v1 artifact and
+set-upsert semantics intact unless a task records an explicit reviewed change.
+Accept: the large-origin path has a measured baseline, a tested bounded
+microbatch implementation or a visible blocker, a Grimoire memory artifact
+whose units and assumptions are auditable, and a final disposition for ORT
+allocator and staging alternatives.
+-> checkpoint
+-> checkpoint-followup
+@guidance text/markdown docs/benchmarks.md
+@guidance text/markdown performance.md
+@guidance text/markdown docs/product-planning/architecture.md
+@guidance text/markdown agent-proposed-specs/set-upsert.md
+@guidance text/plain benchmarks.vine
+---
+[contract] Define memory and allocation evidence (complete)
+Fix the meanings, units, ownership, and comparison rules for memory evidence in
+this investigation.
+Serves: every scale fixture, Grimoire report, and runtime observation has one
+interpretation.
+Absent: a tensor-byte projection can be mistaken for peak RSS, or a native
+allocator observation can be mistaken for a deterministic regression gate.
+Known by: named static reports, resource kinds, scenario axes, collection
+boundaries, and the conditions under which a field is exact or diagnostic.
+Files: docs/benchmarks.md.
+Do: distinguish `bytes` moved, `memory-bytes` resident or charged, scry-owned
+logical high-water bytes, final embedding storage, requested tensor bytes, and
+maximum-observed resident/secondary process-memory observations. Define the identity of the
+inference microbatch and padded sequence axes separately from the fixed v1
+artifact identity. State that a sum of tensor sizes is not a peak-live claim
+without an explicit liveness schedule, and that RSS/private memory remains
+ diagnostic rather than a CI gate.
+Accept: the document names one owner, unit, basis, collection boundary, and
+comparison rule for every new field; no field can be read as a portable process
+memory promise; the existing v1 baseline update rule remains coherent.
+> Added the memory-accounting contract to docs/benchmarks.md: Grimoire shape-derived projections, typed memory-bytes charges, scry-owned logical bytes, and native process diagnostics now have separate bases and comparison rules.
+> The fixed baseline-v1.json remains the v1 gate; future memory scenarios belong to a separate deterministic artifact, while RSS/private memory remains diagnostic.
+---
+[scale] Reproduce the large-origin baseline (complete)
+Build a deterministic local scale workload that exposes the large-origin
+embedding regime before changing the production path.
+Serves: later changes are compared against the same source bytes, tokenizer
+tokens, span count, padded inference shape, and process boundary.
+Absent: a small ten-span workload can pass while the failure only exists when
+one origin creates hundreds or thousands of spans.
+Known by: a local fixture or exact fixture provenance, source bytes, tokenizer
+tokens, spans, candidate microbatch count, final vectors, add outcome, and the
+native-memory sampling command and conditions.
+Files: crates/scry-benchmarks/src/scale.rs,
+crates/scry-benchmarks/src/main.rs, crates/scry/src/slice.rs,
+crates/scry/src/benchmark.rs, performance.md.
+Do: keep the measured input local and deterministic rather than fetching the
+issue URL during a gate. Reproduce the reported regime as closely as the pinned
+tokenizer permits, record the actual bytes/tokens/spans and padded sequence
+length, and run the current one-call path in the process whose peak native
+memory can be sampled. Compare candidate batch sizes only after the baseline
+has been captured; keep setup, model loading, and artifact serialization out of
+the add boundary.
+Accept: the scale command reports the fixed input identity and exact logical
+relationships, distinguishes one fastembed API call from its inferred internal
+batches, records native metrics with their platform and sampling protocol, and
+leaves a raw baseline in `performance.md` without making RSS or elapsed time a
+gate.
+-> contract
+-> native
+> The deterministic local fixture repeats one HTML-shaped fragment 2,400 times and measures 705,600 source bytes, 189,600 tokenizer tokens, and 747 spans; its fingerprint is b774895d9290c24734e206434915017d1ad8ad8f4c9b89c53fc52b33fd527aa3.
+> The current one-call path returns 747 vectors in one Scry embedding API call, which fastembed internally splits into three inferred batches of 256; native sampling at 10 ms observed 4,062,822,400 `working_set_bytes` and 5,180,784,640 Windows private bytes.
+> The scale command is benchmark-only and process-local; the issue URL is not fetched, native peaks remain diagnostic, and the fixed v1 artifact is unchanged.
+---
+[native] Sample diagnostic native memory (complete)
+Provide a benchmark-only process-memory observation seam for the scale workload.
+Serves: the investigation can see whether raw outputs and ORT allocations stop
+scaling with total document spans.
+Absent: the only memory number is a post-hoc guess from managed object sizes or
+a point sample that misses the inference peak.
+Known by: maximum-observed resident and secondary-memory fields where the platform exposes
+them, sampling interval or event boundary, process lifetime, and an explicit
+unsupported-platform result.
+Files: crates/scry-benchmarks/src/native_memory.rs,
+crates/scry-benchmarks/src/main.rs, and the smallest benchmark manifest change
+needed for its diagnostic support.
+Do: measure the scale workload in a child process or with a sampler that can
+observe inside inference; use platform adapters and label Windows
+`WorkingSet64`/`PrivateMemorySize64` separately from the Unix resident-set
+equivalent. Keep
+model assets, code pages, and allocator policy in the diagnostic record rather
+than subtracting invented constants. Do not add native memory to the
+machine-agnostic v1 artifact or make unsupported platforms fail deterministic
+checks.
+Accept: the helper has a focused test or fixture for its output shape and
+failure behavior, reports the sampling protocol with every observation, and
+cannot be imported by the supported scry or MCP product surface.
+-> contract
+> Added benchmark-only sysinfo 0.38.4 sampling with an explicit resident metric: Windows WorkingSetSize is `working_set_bytes`, Unix uses `resident_set_bytes`, and Windows PrivateUsage is the secondary private metric; the sampler records interval, sample count, and metric semantics without entering v1 artifacts.
+> Focused sampler tests pass; unsupported native memory is diagnostic and does not affect normal scry or MCP builds.
+---
+[grimoire-memory] Express shape-aware allocation projections (complete)
+Extend the benchmark-side Grimoire analysis so memory-shaped work is visible
+beside, but not inside, the existing FLOP reports.
+Serves: a microbatch change has a deterministic logical allocation envelope that
+can be recomputed from the pinned graph and explicit scenario axes.
+Absent: reviewers see only native RSS, a hand-written scalar, or a FLOP total
+when the relevant change is the size and lifetime of model tensors.
+Known by: canonical Grimoire graph identity, dtype width, tensor shape, axis
+bindings, named scenario, target address, resource kind, and the expression or
+literal basis that produced each report.
+Files: crates/scry-benchmarks/src/bridge.rs,
+crates/scry-benchmarks/src/artifact.rs,
+crates/scry-benchmarks/src/memory.rs,
+benchmarks/memory-v1.json.
+Do: derive logical tensor-byte expressions from the existing addressed shapes
+and ONNX element types using checked `CostExpression` arithmetic. Evaluate
+those expressions for named inference scenarios such as the measured padded
+sequence at microbatch sizes 256, 64, 32, and 16. Use Grimoire's typed
+`ResourceModel` and `ResourceKind::MemoryBytes` to group explicit scenario
+charges where that account is the right boundary. Report at least active raw
+inference output bytes and final pooled embedding bytes, and retain input,
+parameter, or record accounts only when their ownership and shape basis are
+explicit. Keep memory charges, byte flows, and FLOP reports separate.
+Create a separate deterministic memory artifact so the fixed `baseline-v1.json`
+identity and its `(B,S)=(1,32)` contract do not silently acquire runtime
+microbatch meaning. Preserve graph, model, source, schema, and cost-model
+identity in the new artifact, and fail on unknown dtype, shape, address,
+scenario, overflow, or unit ambiguity.
+Accept: `memory-v1.json` regenerates deterministically from pinned inputs; its
+reports show how each named microbatch changes the logical tensor allocation
+projection; every value has a unit and basis; no report is labelled peak live
+or native RSS without an explicit liveness or measurement protocol; the
+existing v1 artifact remains byte-identical.
+-> contract
+-> scale
+> Generated and exact-checked benchmarks/memory-v1.json as a separate artifact with the pinned graph/model identity and four microbatch scenarios: 256, 64, 32, and 16 spans.
+> The artifact uses checked CostExpression projections for active raw output, one-call retained raw output, final pooled embeddings, and active int64 input tensors; active raw output is 101056512 bytes at 256 spans and 12632064 bytes at 32 spans for padded sequence 257.
+> Grimoire ResourceModel validates the explicit memory-bytes charges; the artifact does not call any quantity peak live or native RSS, and baseline-v1.json remains unchanged.
+---
+[microbatch] Bound raw inference output by microbatch (complete)
+Change the scry embedding path so fastembed does not retain raw ONNX outputs for
+all spans in one origin before pooling them.
+Serves: large single-origin add can process bounded inference batches while
+retaining only the final vectors needed for one atomic record.
+Absent: a smaller batch argument passed to one fastembed call still leaves
+`EmbeddingOutput` holding every internal `SingleBatchOutput` until the call
+finishes.
+Known by: one product-owned passage boundary, one fastembed invocation per
+submitted microbatch, immediate conversion to final embeddings, exact final
+vector count, and unchanged add failure and visibility behavior.
+Files: crates/scry/src/embed.rs, crates/scry/src/benchmark.rs,
+crates/scry/src/add.rs, and focused tests beside those owners.
+Do: keep `SlicedText` as the source of bounded passages. Split only the spans
+belonging to the current origin, call fastembed separately for each fixed
+32-span microbatch, pool and convert each result before the next call, and
+accumulate final embeddings without writing the origin early. Do not batch
+passages from different origins. Define the private diagnostic meaning of
+embedding invocation and microbatch counters without silently giving an old
+field two meanings. Preserve the one-origin record and transaction boundary,
+refusal continuation, failure halting, and bounded source policy.
+Accept: small, multi-span, and scale cases produce exactly one final embedding
+per span; a failed microbatch leaves the current origin uncommitted and applies
+the existing later-member halt rule; search, provenance, refusal, and handle
+behavior remain valid; focused tests prove that the fixed pipeline never gives
+a single fastembed call the whole large-origin passage list; add-only exact
+fingerprints and logical outcomes remain explainable.
+-> contract
+-> grimoire-memory
+-> scale
+> Store::add now processes SlicedText in validated 32-span calls, converting each result to final embeddings before the next fastembed call; all final vectors remain in memory until one atomic per-origin record commit.
+> A diagnostic harness compared 64, 32, and 16-span calls before the product boundary was fixed. The identical 747-span fixture produced 1,228,500,992/1,432,776,704 bytes at 64, 713,588,736/808,693,760 at 32, and 457,883,648/495,513,600 at 16 for maximum-observed `working_set_bytes`/`private_bytes` on Windows. The current product and scale runner use the 32-span boundary without a selector.
+> Focused library tests (139), benchmark tests (8), add-only fingerprints/logical counts, memory-v1 exact check, v1 baseline check, and normal no-feature scry check pass; no cross-origin batching or partial visibility was introduced.
+---
+[allocator] Disposition residual ORT allocation (complete)
+Test whether native memory remains disproportionate to the active microbatch
+after the scry-owned boundary has been changed.
+Serves: a remaining native-memory slope is either explained by ORT
+configuration or promoted as a dependency/upstream problem rather than hidden
+in a benchmark number.
+Absent: a successful microbatch loop can be called a memory bound while an ORT
+arena or session allocation still grows with the total run.
+Known by: paired scale runs at the historical candidate sizes, the native sampler
+protocol, fastembed/ORT versions, execution provider, thread setting, and the
+observed memory slope.
+Files: crates/scry/Cargo.toml, crates/scry/src/embed.rs,
+crates/scry-benchmarks/src/main.rs, crates/scry-benchmarks/src/scale.rs,
+performance.md; an agent-proposed specification only if a new contract or
+dependency decision is required.
+Do: compare the baseline and fixed-boundary runs first. Only because the
+residual peak still scales with total active spans, use a separately-owned
+diagnostic harness to test allocator behavior. Keep the default production
+setting unchanged. Do not infer a hard cap from a lower RSS sample, and do not
+change allocator settings in production without recording the throughput,
+portability, and model-output consequences.
+Accept: the task closes with measured evidence and one disposition: no further
+allocator change is justified, a narrowly scoped production configuration is
+specified, or an upstream/fork issue names the missing streaming or allocator
+control. No unsupported ORT setting is smuggled into the microbatch change.
+-> contract
+-> microbatch
+-> native
+> A benchmark-only ORT CPU arena experiment at microbatch 32 measured 486580224/471056384 maximum-observed `working_set_bytes`/`private_bytes` with arena off and 715517952/809926656 with arena on; all exact scale relationships and one-origin write outcome remained intact.
+> The residual native peak is allocator-sensitive, but native samples are process-local and no fixed throughput or cross-platform output-parity protocol was collected. Production allocator defaults remain unchanged; allocator controls remain outside the product path.
+---
+[staging] Decide whether final-output staging is needed (complete)
+Determine whether the final vectors or record materialization, rather than raw
+inference outputs, require an explicit spill boundary for larger inputs.
+Serves: atomic one-origin visibility remains possible if retaining all final
+embeddings becomes the next memory limit.
+Absent: the implementation either claims an unbounded memory guarantee it does
+not provide or introduces partial visibility through an undocumented staging
+path.
+Known by: measured final-vector bytes, record bytes, document text and span
+storage, redb value requirements, failure cleanup, restart recovery, and the
+visibility rule for incomplete origins.
+Files: agent-proposed-specs/large-origin-staging.md only if the measured data
+requires a new contract; no production staging is presumed by this plan.
+Do: inspect the post-microbatch scale data and the private record encoder. If
+final vectors remain reasonable, record that no staging is needed. If they do
+not, write a proposal before implementation that chooses a temporary file or
+private store staging area, defines cleanup and crash recovery, and keeps an
+incomplete origin invisible until one complete record is committed. Do not
+change the record layout or transaction boundary inside the microbatch task.
+Accept: the task ends with either an evidence-backed no-staging disposition or
+a reviewed proposal with explicit recovery and atomicity rules; no partial
+embedding can become searchable.
+-> contract
+-> microbatch
+-> native
+> The 747-span scale fixture retains 1,147,392 bytes of final float32 vectors; source text is 705,600 bytes and the encoded record remains far below the observed 495-809 MB post-microbatch native peaks.
+> No explicit final-output spill is justified for this regime. Keep all final embeddings until one complete per-origin record is prepared and committed; do not introduce partial visibility or crash-recovery state without a future larger-input measurement.
+---
+[validation] Validate the bounded path and memory artifact (complete)
+Run the focused and repository-wide checks after the scale, projection, and
+microbatch work have been consumed.
+Serves: the result is a correct scry change with an auditable Grimoire memory
+view, not a memory number purchased by weakening corpus semantics.
+Absent: a local memory reduction can hide changed vectors, spans, identities,
+refusal behavior, baseline fields, or atomic visibility.
+Known by: focused behavior tests, exact logical observations, memory artifact
+comparison, static v1 comparison, normal-build feature isolation, and the
+repository validation suite.
+Files: none; this task records validation evidence in the plan and
+performance.md.
+Do: run focused add/embed/slice/store tests first. Run the scale baseline and
+post-change commands under the same child-process and cache conditions; compare
+bytes, tokens, spans, microbatch count, final vectors, outcomes, and native
+sampling metadata. Regenerate and check `benchmarks/memory-v1.json` separately
+from `benchmarks/baseline-v1.json`. Then run `cargo fmt --all -- --check`, the
+constrained workspace tests, strict Clippy, docs, cargo-deny, the normal scry
+build, and the exact v1 baseline check. Compare Grimoire graph identity and
+static reports before runtime diagnostics.
+Accept: one final report states which deterministic projections changed and why,
+which native observations changed and under what conditions, and whether the
+one-origin atomic contract and existing v1 artifact remained intact. All
+available checks pass, or a failure is recorded as a visible blocker rather
+than converted into a tolerance.
+-> allocator
+-> contract
+-> grimoire-memory
+-> microbatch
+-> scale
+-> staging
+> Final workspace validation passed: 139 library tests, 15 integration tests, 8 benchmark tests, 2 MCP unit tests, and 1 MCP process test; formatting, strict Clippy, workspace docs, cargo-deny, and the normal no-feature scry build pass.
+> Final scale default at microbatch 32 preserved 705600 bytes, 189600 tokens, 747 spans, 747 vectors, one write, and upserted outcome; add-only fingerprints/logical counts are unchanged.
+> The separate memory-v1.json exact check and original baseline-v1.json exact check both pass. Native scale and allocator observations remain diagnostic and are recorded in performance.md with their conditions.
+---
+[checkpoint] Review large-origin memory outcome (complete)
+Review the complete graph and evidence before treating the issue as resolved.
+Serves: future work starts from a clear memory account and a bounded embedding
+ownership boundary.
+Absent: a passing microbatch test can be read as a universal RSS guarantee, or
+a Grimoire memory report can be mistaken for an allocator trace.
+Known by: valid DAG, disjoint file ownership, scale evidence, typed memory
+projection, exact logical counters, native diagnostic protocol, and explicit
+allocator/staging dispositions.
+Files: none; the checkpoint records the final disposition in memory.vine and
+performance.md.
+Do: validate every task dependency, file path, metric unit, scenario axis,
+artifact identity, and acceptance claim. Confirm that Grimoire-derived
+`memory-bytes` charges remain explicit projections, that sourced native
+measurements remain diagnostic, and that no HTML normalization or
+cross-document batching was introduced by implication.
+Accept: `memory.vine` has no islands or cycles; the scale fixture exposes the
+reported regime; the fixed product microbatch path is behaviorally atomic; the
+memory artifact shows scenario-sensitive logical allocations; native memory
+claims carry their sampling conditions; and any residual ORT or staging gap is
+sized and routed to a reviewed next task.
+-> contract
+-> validation
+> The complete graph has disjoint ownership and validates with no islands or cycles. Grimoire memory-bytes projections, scry logical counters, and native process diagnostics remain separate evidence layers.
+> The production path uses SlicedText and bounded 32-span calls, retains final embeddings until one per-origin record commit, and does not introduce cross-origin batching, HTML normalization, or partial visibility.
+> The issue reproduction is captured at a safer 747-span scale fixture; 64/32/16 and ORT arena on/off observations show native memory tracks active batch/allocator conditions without supporting a portable RSS gate or production allocator change.
+---
+[validation-followup] Validate the boundary fixes (complete)
+Run focused and repository-wide validation after the follow-up risk fixes.
+Serves: the added guarantees are real at library, MCP process, CLI process, and Grimoire artifact boundaries.
+Known by: focused bounds/parity/projection tests, MCP multi-batch E2E, benchmark CLI subprocess checks, exact memory and v1 artifacts, normal product build, and full workspace gates.
+Files: performance.md and memory.vine.
+Do: validate the fixed product boundary, graph-derived byte projections, multi-batch MCP behavior, CLI subprocess behavior, sampler wording, exact artifacts, normal-build isolation, and the full repository gates.
+Accept: all available checks pass, both artifacts remain exact, and residual native/whole-origin limits remain explicitly diagnostic.
+-> bounded-size
+-> checkpoint
+-> cli-boundary
+-> graph-memory
+-> mcp-boundary
+-> sampler-label
+-> vector-parity
+> Final follow-up validation passes: all-features workspace tests (141 library, 15 integration, 14 benchmark unit, 1 CLI, 2 MCP unit, 1 MCP process, and doc tests), strict Clippy, formatting, workspace docs, cargo-deny with existing warnings only, and the normal no-feature scry check.
+> The finalized scale run at the fixed 32-span boundary preserved 705600 bytes, 189600 tokens, 747 spans, 24 embedding calls, 24 inferred batches, 747 vectors, one write, and an upserted outcome; the largest observed embedding call was 32 passages. Windows native diagnostics reported 2688 samples, 712204288 maximum-observed `working_set_bytes`, and 806268928 maximum-observed `private_bytes` at the 10 ms interval.
+> The successful scale CLI subprocess, add-only matrix, exact memory artifact check, and exact v1 baseline check all pass; native values remain diagnostic and no artifact changed.
+> The final diff contains no incidental CI-run or branch-commit references; README benchmark wording points to the stable CI workflow and baseline artifact.
+> High-value follow-up fixes now reject truncated benchmark shape inputs, take a synchronous initial native-memory sample before starting the sampler thread, and compare fixed-pipeline vectors against one-at-a-time passage embeddings in span order within `1e-5`. The nested custom memory-output directory behavior remains tracked separately in issue #6.
+---
+[checkpoint-followup] Review final boundary coherence (complete)
+Review the follow-up fixes against the memory and caller-facing contracts.
+Serves: the issue closes with a bounded raw-inference lifetime and honest evidence at every public boundary.
+Known by: valid graph, disjoint follow-up ownership, exact artifacts, vector parity, MCP and CLI process coverage, and explicit residual limits for final-vector/record memory and ORT allocation.
+Files: memory.vine and performance.md.
+Do: validate the graph and confirm the fixed product boundary, graph-derived byte projections, multi-batch MCP path, CLI subprocess path, and maximum-observed sampler language.
+Accept: the graph has no islands or cycles, all boundary tests pass, no unsupported process-memory guarantee is made, and residual whole-origin allocation risk is named for later work.
+-> validation-followup
+> The 18-task follow-up graph validates with no islands or cycles. The fixed 32-span product boundary, graph-derived memory facts, multi-batch MCP E2E, benchmark CLI subprocess path, maximum-observed sampler semantics, truncation refusal, and vector-order parity are all covered.
+> The fixed v1 artifact and separate memory-v1 artifact remain exact; one-origin atomic visibility, refusal behavior, and normal-build feature isolation remain intact. Residual final-vector/record and ORT allocator behavior are explicitly diagnostic follow-up limits rather than unsupported guarantees.
+---
+[bounded-size] Fix the product-owned passage boundary (complete)
+Make the product-owned passage pipeline stay below fastembed's internal batch boundary.
+Serves: the memory reduction cannot be bypassed by changing a benchmark or testing argument.
+Absent: an alternate constructor or CLI knob silently recreates multi-batch raw-output retention inside one Scry call.
+Known by: one fixed boundary, one production constructor, and the scale diagnostic's exact call-count assertions.
+Files: crates/scry/src/embed.rs, crates/scry/src/lib.rs, crates/scry-benchmarks/src/main.rs, focused tests beside those owners.
+Do: keep the product-owned passage boundary fixed at 32, below the pinned fastembed batch size of 256; remove benchmark and testing selectors from the production constructor and CLI; keep the scale diagnostic's call-count assertions tied to that one boundary.
+Accept: `Embed::load` is the sole constructor, the scale CLI exercises the fixed 32-span pipeline, and no benchmark or testing argument can select another production boundary.
+-> microbatch
+> The scale runner requires observed embedding_calls and embedding_batches to equal ceil(span_count / 32), and requires the largest observed embedding-call size to equal min(span_count, 32), so altered pipeline wiring fails visibly rather than passing on nonzero counts.
+---
+[graph-memory] Derive memory projections from graph facts (complete)
+Remove silent hardcoded shape and dtype assumptions from the Grimoire memory artifact.
+Serves: a regenerated memory projection fails or changes visibly when the pinned graph's output shape, element type, or input layout changes.
+Absent: a plausible memory number survives a model/export change while no longer describing the addressed ONNX graph.
+Known by: graph-derived output shape, element-type width, input tensor layout, explicit scenario axes, and visible mismatch errors.
+Files: crates/scry-benchmarks/src/onnx.rs, crates/scry-benchmarks/src/bridge.rs, crates/scry-benchmarks/src/memory.rs, focused benchmark tests, benchmarks/memory-v1.json only if identity or values change.
+Do: carry required tensor metadata from ModelGraph into StaticModel; validate output shape `[batch, sequence, dimension]`, expected input count/types, and supported element widths. Build CostExpression factors from those facts and fail on unknown or incompatible metadata.
+Accept: pinned memory-v1 values remain the same; altered graph shape/type facts fail visibly; no projection relies on an unvalidated hardcoded dtype width or input count.
+-> grimoire-memory
+> Memory artifact source bytes, tokens, spans, and padded sequence length are now derived through benchmark-only Embed/Slice tokenizer helpers; the pinned padded length is measured as 257 and memory-v1.json remains exact.
+> Both v1 and memory artifact checkers normalize CRLF before comparison, preserving exact JSON semantics across Windows checkouts.
+---
+[vector-parity] Verify embedding parity across microbatches (complete)
+Prove that the fixed production pipeline splits one document into bounded calls while preserving the final embedding sequence closely enough for the current search contract.
+Serves: the memory fix does not silently change persisted vectors or ranking behavior through padding or call-boundary effects.
+Absent: count and search happy paths pass while vectors drift when a document crosses the microbatch boundary.
+Known by: one deterministic multi-span text crossing the fixed boundary, vector count/order, and the production call-count contract.
+Files: crates/scry/src/embed.rs and focused tests beside that owner; performance.md for measured evidence.
+Do: embed one deterministic SlicedText through the production path; verify every span produces one final vector in order and that the fixed microbatch call count is observed. Keep the boundary owned by the production pipeline rather than a benchmark selector.
+Accept: the test crosses the boundary, returns one vector per span in the same order, and either proves parity within the rule or fails without weakening the assertion.
+-> microbatch
+> The production-path test embeds the same 9000-word multi-span text across the fixed 32-span boundary and verifies vector count/order plus the exact observed call and batch counts; no alternate constructor or search contract is needed.
+---
+[mcp-boundary] Exercise a multi-batch document through MCP (complete)
+Extend the real process-level MCP test so its add path crosses the production microbatch boundary.
+Serves: refactors are protected at the caller-facing stdio boundary, not only inside library tests.
+Absent: the MCP happy path passes while process wiring or serialization fails for a large document.
+Known by: an actual scry-mcp child process, a deterministic local document with more than 32 spans, one successful add, search, handle exchange, provenance, neighbours, delete, and Gone behavior.
+Files: crates/scry-mcp/tests/e2e.rs.
+Do: enlarge or add a local fixture so at least one MCP add crosses 32 spans; preserve the existing refusal, duplicate, and preflight assertions; do not bypass the binary.
+Accept: the spawned process proves the multi-batch document is searchable and traceable and exits successfully.
+-> microbatch
+> The actual scry-mcp subprocess E2E fixture now uses 900 deterministic paragraphs, crossing the 32-span production boundary while preserving the existing preflight, duplicate normalization, refusal, search, handle, provenance, neighbours, delete, and Gone assertions.
+> The MCP process test passes with the multi-batch source and clean child exit.
+---
+[cli-boundary] Exercise the benchmark CLI boundary (complete)
+Add subprocess coverage for stable benchmark CLI modes and invalid option handling.
+Serves: artifacts and diagnostics remain runnable through the binary invoked by users and CI.
+Absent: `--memory-check`, `--add-only`, or scale wiring breaks while internal tests remain green.
+Known by: the actual scry-benchmarks binary, exit status, diagnostic text, prepared cache path, and checked artifact.
+Files: crates/scry-benchmarks/tests/cli.rs.
+Do: invoke `--help`, run a successful `--scale` through the product pipeline, and run
+`--memory-check benchmarks/memory-v1.json` against the prepared cache. Do not
+assert native memory values.
+Accept: a scale run through the fixed 32-span pipeline returns zero with stable
+logical output; memory-check returns zero with its success line; no artifact is
+rewritten.
+-> bounded-size
+-> graph-memory
+> Added crates/scry-benchmarks/tests/cli.rs subprocess coverage for the actual binary: --help exposes add-only/scale/memory, --scale succeeds with the fixed product pipeline and stable logical output, and --memory-check succeeds without rewriting memory-v1.json.
+> The CLI integration test passes (1) against the prepared local cache and does not assert native memory values.
+---
+[sampler-label] Name native observations precisely (complete)
+Make native sampler output say maximum observed sample rather than implying a guaranteed process peak.
+Serves: diagnostic memory evidence cannot be read as a hard allocator bound.
+Absent: a 10 ms polling sampler and a field named `peak` invite stronger claims than the protocol supports.
+Known by: output field names, documentation, sampling interval, sample count, and unchanged diagnostic-only classification.
+Files: crates/scry-benchmarks/src/native_memory.rs, crates/scry-benchmarks/src/scale.rs, docs/benchmarks.md, performance.md.
+Do: rename or qualify native fields as maximum observed values, carry the
+resident metric kind through sampling, retain the sampling protocol, and update
+evidence without changing deterministic artifacts.
+Accept: every native report identifies observation semantics and interval, no text calls it a guaranteed process peak, and the benchmark still runs.
+-> native
+> Renamed the native result type to MaximumObservedMemory and scale output fields to max_observed_resident_bytes plus resident_metric/max_observed_secondary_bytes; the 10 ms sampling interval and process-local diagnostic basis remain explicit. The resident metric kind is carried through each sample and must remain stable for the run.
+> Updated performance evidence labels and confirmed no peak/process-peak wording remains in the sampler, scale output, benchmark docs, or performance log; focused benchmark tests pass (11).

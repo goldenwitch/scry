@@ -248,7 +248,9 @@ pub(crate) fn check_artifact(
     artifact: &BaselineArtifact,
     path: &Path,
 ) -> Result<(), ArtifactError> {
-    let expected = fs::read_to_string(path).map_err(|err| error(err.to_string()))?;
+    let expected = fs::read_to_string(path)
+        .map_err(|err| error(err.to_string()))?
+        .replace("\r\n", "\n");
     let actual = serialize_artifact(artifact)?;
     if expected != actual {
         let expected_lines = expected.lines().collect::<Vec<_>>();

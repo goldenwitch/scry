@@ -99,6 +99,41 @@ impl Slice {
         Ok(SlicedText { text, spans })
     }
 
+    /// Counts the tokens and spans of `text` for benchmark workload identity.
+    ///
+    /// This is available only to benchmark builds. It reuses the slicer's
+    /// tokenizer and therefore follows the same pinned input interpretation as
+    /// the cut operation.
+    ///
+    /// # Errors
+    ///
+    /// The pinned tokenizer refusing the text.
+    #[cfg(feature = "benchmark-instrumentation")]
+    pub fn benchmark_counts(&self, text: &Text) -> io::Result<(usize, usize)> {
+        let tokens = self
+            .tokenizer
+            .encode(text.as_str(), false)
+            .map_err(io::Error::other)?
+            .len();
+        let spans = self.spans(text)?.len();
+        Ok((tokens, spans))
+    }
+
+    /// Returns copied benchmark passages from the exact sliced text.
+    ///
+    /// This is available only to benchmark builds that need to inspect the
+    /// model tokenizer's padded batch shape without embedding the passages.
+    ///
+    /// # Errors
+    ///
+    /// The pinned tokenizer refusing the text or a sliced passage not reading
+    /// from the text it was cut from.
+    #[cfg(feature = "benchmark-instrumentation")]
+    pub fn benchmark_passages(&self, text: &Text) -> io::Result<Vec<String>> {
+        let sliced = self.cut(text.clone())?;
+        Ok(sliced.passages()?.into_iter().map(str::to_owned).collect())
+    }
+
     /// Cuts `text` into the spans that partition it.
     ///
     /// No span holds more than a window of tokens, so a chunk the model would
@@ -119,6 +154,7 @@ impl Slice {
             .tokenizer
             .encode(text.as_str(), false)
             .map_err(io::Error::other)?;
+        crate::benchmark::record_sliced_tokens(encoding.len());
         let mut start = 0;
         let mut spans = Vec::new();
         for end in self.cuts(text, encoding.get_offsets())? {
