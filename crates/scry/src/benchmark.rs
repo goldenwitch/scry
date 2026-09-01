@@ -10,8 +10,10 @@ mod active {
     #[derive(Clone, Debug, Default, Eq, PartialEq)]
     pub struct Snapshot {
         source_bytes: u64,
+        sliced_tokens: u64,
         sliced_spans: u64,
         embedding_calls: u64,
+        embedding_batches: u64,
         embedding_input_bytes: u64,
         embedding_vectors: u64,
         write_transactions: u64,
@@ -51,10 +53,22 @@ mod active {
             self.sliced_spans
         }
 
+        /// Tokens counted by the slicer for the documents it cut.
+        #[must_use]
+        pub const fn sliced_tokens(&self) -> u64 {
+            self.sliced_tokens
+        }
+
         /// Calls made to the embedding model.
         #[must_use]
         pub const fn embedding_calls(&self) -> u64 {
             self.embedding_calls
+        }
+
+        /// Internal model batches used by the embedding calls.
+        #[must_use]
+        pub const fn embedding_batches(&self) -> u64 {
+            self.embedding_batches
         }
 
         /// Input bytes handed to the embedding model.
@@ -274,12 +288,32 @@ mod active {
         update(|snapshot| add_usize(&mut snapshot.sliced_spans, amount, &mut snapshot.overflowed));
     }
 
+    pub(super) fn sliced_tokens(amount: usize) {
+        update(|snapshot| {
+            add_usize(
+                &mut snapshot.sliced_tokens,
+                amount,
+                &mut snapshot.overflowed,
+            );
+        });
+    }
+
     pub(super) fn embedding_call(input_bytes: usize) {
         update(|snapshot| {
             add(&mut snapshot.embedding_calls, 1, &mut snapshot.overflowed);
             add_usize(
                 &mut snapshot.embedding_input_bytes,
                 input_bytes,
+                &mut snapshot.overflowed,
+            );
+        });
+    }
+
+    pub(super) fn embedding_batches(amount: usize) {
+        update(|snapshot| {
+            add_usize(
+                &mut snapshot.embedding_batches,
+                amount,
                 &mut snapshot.overflowed,
             );
         });
@@ -457,12 +491,28 @@ pub(crate) fn record_sliced_spans(amount: usize) {
 pub(crate) const fn record_sliced_spans(_: usize) {}
 
 #[cfg(feature = "benchmark-instrumentation")]
+pub(crate) fn record_sliced_tokens(amount: usize) {
+    active::sliced_tokens(amount);
+}
+
+#[cfg(not(feature = "benchmark-instrumentation"))]
+pub(crate) const fn record_sliced_tokens(_: usize) {}
+
+#[cfg(feature = "benchmark-instrumentation")]
 pub(crate) fn record_embedding_call(input_bytes: usize) {
     active::embedding_call(input_bytes);
 }
 
 #[cfg(not(feature = "benchmark-instrumentation"))]
 pub(crate) const fn record_embedding_call(_: usize) {}
+
+#[cfg(feature = "benchmark-instrumentation")]
+pub(crate) fn record_embedding_batches(amount: usize) {
+    active::embedding_batches(amount);
+}
+
+#[cfg(not(feature = "benchmark-instrumentation"))]
+pub(crate) const fn record_embedding_batches(_: usize) {}
 
 #[cfg(feature = "benchmark-instrumentation")]
 pub(crate) fn record_embedding_vectors(amount: usize) {
@@ -544,18 +594,21 @@ pub(crate) fn record_stage_duration(stage: Stage, nanos: u128) {
 #[cfg(all(test, feature = "benchmark-instrumentation"))]
 mod tests {
     use super::{
-        Collector, Stage, record_add_member, record_embedding_call, record_embedding_vectors,
-        record_neighbour_passage, record_owned_logical_bytes, record_provenance_lookup,
-        record_read_transaction, record_search_document, record_search_hit, record_sliced_spans,
-        record_source_bytes, record_stage_duration, record_write_transaction,
+        Collector, Stage, record_add_member, record_embedding_batches, record_embedding_call,
+        record_embedding_vectors, record_neighbour_passage, record_owned_logical_bytes,
+        record_provenance_lookup, record_read_transaction, record_search_document,
+        record_search_hit, record_sliced_spans, record_sliced_tokens, record_source_bytes,
+        record_stage_duration, record_write_transaction,
     };
 
     #[test]
     fn a_collection_starts_empty_and_records_owned_boundaries() {
         let collector = Collector::start();
         record_source_bytes(12);
+        record_sliced_tokens(9);
         record_sliced_spans(3);
         record_embedding_call(20);
+        record_embedding_batches(2);
         record_embedding_vectors(3);
         record_write_transaction();
         record_read_transaction();
@@ -568,8 +621,10 @@ mod tests {
         let snapshot = collector.finish();
 
         assert_eq!(snapshot.source_bytes(), 12);
+        assert_eq!(snapshot.sliced_tokens(), 9);
         assert_eq!(snapshot.sliced_spans(), 3);
         assert_eq!(snapshot.embedding_calls(), 1);
+        assert_eq!(snapshot.embedding_batches(), 2);
         assert_eq!(snapshot.embedding_input_bytes(), 20);
         assert_eq!(snapshot.embedding_vectors(), 3);
         assert_eq!(snapshot.write_transactions(), 1);

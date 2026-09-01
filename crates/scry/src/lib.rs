@@ -111,7 +111,11 @@ pub use crate::benchmark::{Collector as BenchmarkCollector, Snapshot as Benchmar
 pub use crate::chunk::Chunk;
 pub use crate::count::Count;
 pub use crate::digest::Digest;
+#[cfg(feature = "benchmark-instrumentation")]
+pub use crate::embed::DEFAULT_PASSAGE_MICROBATCH_SIZE;
 pub use crate::embed::Embed;
+#[cfg(feature = "benchmark-instrumentation")]
+pub use crate::embed::MAX_PASSAGE_MICROBATCH_SIZE;
 pub use crate::handle::Handle;
 pub use crate::hit::Hit;
 pub use crate::incompatible::Incompatible;

@@ -162,6 +162,67 @@ These are logical boundary observations. They do not include filesystem
 allocation, network transfer rate, native ORT residency, allocator policy, or
 process RSS.
 
+## Memory accounting
+
+Memory evidence has three separate layers:
+
+- Grimoire-derived logical tensor and allocation projections;
+- scry-owned logical live-byte observations; and
+- native process-memory observations from the embedding runtime.
+
+The first layer is deterministic analysis, not a profiler. A memory projection
+uses the pinned Grimoire description, explicit tensor shapes, dtype width, and
+named scenario axes such as inference microbatch and padded sequence length.
+Shape-dependent quantities are derived with checked `CostExpression` arithmetic.
+The typed Grimoire `memory-bytes` account may then carry explicit scenario
+charges through `ResourceModel`. `bytes` remains a transfer quantity and is not
+interchangeable with resident or charged `memory-bytes`.
+
+The memory analysis uses a separate artifact from `baseline-v1.json`. Its
+identity includes the same model, graph, Grimoire source, schema, and workload
+provenance, plus the scenario axes that determine the projection. It may report
+active raw inference output bytes, padded input tensor bytes, pooled embedding
+bytes, and other named accounts whose ownership is explicit. A sum of tensor
+sizes is not a peak-live allocation claim unless an execution order and liveness
+rule are part of the analyzed input. The fixed v1 artifact's `(B,S)=(1,32)`
+identity is not the runtime microbatch setting.
+
+The scale and memory commands are separate from the v1 gate:
+
+```text
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --scale
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --scale --microbatch-size 32
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --memory
+cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --memory-check benchmarks/memory-v1.json
+```
+
+`--scale` runs the deterministic large-origin add fixture and reports exact
+source/token/span/vector relationships alongside process-local native-memory
+diagnostics. `--microbatch-size` selects a candidate in the safe range 1..=256
+for the scale run; the product default is 32 spans per embedding call. The benchmark-only
+`--cpu-arena on|off` option selects the ORT CPU arena setting for allocator
+experiments; its default is unchanged when the option is absent. `--memory` generates
+`benchmarks/memory-v1.json`; its Grimoire
+projections compare named microbatch scenarios using the pinned model
+dimension, dtype width, padded sequence length, and measured scale span count.
+The artifact can show the logical difference between one active raw tensor and
+raw outputs retained by one API call, but it does not claim that either value
+is the ONNX Runtime peak.
+
+The second layer remains exact when its owner can count it: source bytes,
+record bytes, final embedding storage, and selected logical live-byte
+high-water marks. These values describe scry-owned data structures and do not
+include the model file, filesystem allocation, or native runtime state.
+
+The third layer may record native working-set and private-memory observations
+with the operating system, runtime version, execution provider, process
+lifetime, and sampling protocol. These observations are useful for comparing a
+large-origin experiment under the same conditions, but allocator arenas,
+threading, page policy, and device residency make them machine-local. They
+remain diagnostic and never become a machine-agnostic CI gate. A sourced native
+observation belongs to `measurement/1`; symbolic shape arithmetic belongs to a
+cost or resource projection instead.
+
 ## Excluded from gates
 
 Elapsed time, FLOP/s, CPU frequency, utilization, scheduler behavior, raw RSS,

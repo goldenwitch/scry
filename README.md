@@ -21,14 +21,14 @@ The connected MCP harness discovers the server's available capabilities and
 their input and output shapes at runtime. This README covers the product and
 server setup; capability details belong to MCP discovery.
 
-## Latest CI benchmark
+## CI benchmark baseline
 
-The latest successful [CI run](https://github.com/goldenwitch/scry/actions/runs/33341627728)
-at commit `bfd564e` matched the pinned [v1 benchmark artifact](benchmarks/baseline-v1.json).
-These are algorithmic work and logical-resource reference values, not machine-speed
+The [CI workflow](.github/workflows/ci.yml) checks the pinned [v1 benchmark
+artifact](benchmarks/baseline-v1.json) on pushes and pull requests. These are
+algorithmic work and logical-resource reference values, not machine-speed
 scores or elapsed-time claims:
 
-| Measure | Last CI value |
+| Measure | Baseline value |
 | --- | ---: |
 | Static MatMul work | `688,914,432` MACs |
 | Static FMA work | `1,377,828,864` FMA FLOPs |

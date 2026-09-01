@@ -70,6 +70,140 @@ Each case has a stable workload id and fingerprint. Exact logical counts and
 bytes are the reproducible evidence; elapsed time is a local diagnostic sampled
 under the same process and cache condition.
 
+## Large-origin memory investigation: baseline
+
+Date: 2026-09-01
+Status: baseline captured
+
+Command:
+
+```text
+cargo run --quiet --locked --package scry-benchmarks -- --cache <warm-pinned-cache> --scale
+```
+
+The scale fixture is local and deterministic. It repeats one HTML-shaped
+fragment 2,400 times; it does not fetch or parse the issue's arXiv URL. The
+fixture fingerprint is `b774895d9290c24734e206434915017d1ad8ad8f4c9b89c53fc52b33fd527aa3`.
+Model loading, slicer construction, store setup, and fixture creation are
+outside the sampler and add collector. The native sampler runs in the same
+process at a 10 ms interval while `Store::add` executes.
+
+Raw scale output from the current single-call embedding path:
+
+| Source bytes | Tokens | Spans | Scry embed API calls | Inferred fastembed batches | Final vectors | Final vector bytes | Writes | Outcome |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 705600 | 189600 | 747 | 1 | 3 at batch size 256 | 747 | 1147392 | 1 | upserted |
+
+The exact collector relationships held: source bytes matched the fixture,
+the slicer counted 189,600 tokens and produced 747 spans, and one final vector
+was returned per span. The three internal batch count is inferred from the
+pinned fastembed default batch size and the observed span count; scry does not
+observe fastembed's private `EmbeddingOutput` vector directly.
+
+Native diagnostic observations from the same run were 2,898 samples,
+`max_observed_working_set_bytes=4062822400`, and
+`max_observed_private_bytes=5180784640` (`PrivateUsage` on Windows). These values
+include native runtime and allocator behavior and are not portable memory
+limits or CI gates. They show that a sub-megabyte source fixture with 747
+spans can still reach multi-gigabyte process memory when one fastembed call
+retains all internal raw outputs before pooling.
+
+Decision: keep the existing one-origin atomic commit boundary and proceed with
+a scry-owned microbatch loop. The next comparison must retain all final
+embeddings until record preparation succeeds, while allowing each fastembed
+call's raw outputs to be released before the next microbatch. The fixed v1
+Grimoire artifact remains unchanged; shape-aware memory projections belong to a
+separate memory artifact.
+
+## Large-origin memory investigation: microbatch candidates
+
+Date: 2026-09-01
+Status: candidate sweep captured
+
+Each candidate below used the same 705,600-byte, 189,600-token,
+747-span fixture, warm pinned model cache, 10 ms sampler interval, and setup
+exclusion as the baseline above. Every run produced 747 final vectors, one
+write, and an upserted outcome. The baseline row is the earlier one-call
+implementation; candidate rows use separate Scry embedding calls.
+
+| Configuration | Scry embed API calls | fastembed batches | Maximum observed working-set bytes | Maximum observed private bytes |
+| --- | ---: | ---: | ---: | ---: |
+| baseline one-call | 1 | 3 | 4062822400 | 5180784640 |
+| microbatch 64 | 12 | 12 | 1228500992 | 1432776704 |
+| microbatch 32 | 24 | 24 | 713588736 | 808693760 |
+| microbatch 16 | 47 | 47 | 457883648 | 495513600 |
+
+The exact scale fingerprint and logical relationships remained unchanged in
+all candidate runs. The maximum observed native samples are process-local diagnostic observations,
+not portable bounds; they include ORT and allocator behavior. The 16-span run
+used less observed native memory but required nearly twice as many model calls
+as the 32-span run, and no throughput or latency protocol was collected here.
+
+Decision: retain 32 as the initial production default and keep 64 and 16 as
+explicit benchmark candidates. The Grimoire memory artifact expresses the
+logical tensor-size tradeoff for all three; a later decision about the default
+requires comparable throughput and native-memory samples, not this sweep alone.
+
+## Large-origin memory investigation: ORT allocator disposition
+
+Date: 2026-09-01
+Status: allocator experiment captured
+
+The 32-span scale fixture was run in separate processes with the benchmark-only
+CPU arena override. The model, fixture, cache, sampler interval, and setup
+exclusion were unchanged. Both runs produced 747 final vectors, one write, and
+an upserted outcome.
+
+| CPU arena | Maximum observed working-set bytes | Maximum observed private bytes |
+| --- | ---: | ---: |
+| off | 486580224 | 471056384 |
+| on | 715517952 | 809926656 |
+
+These native observations are consistent with allocator policy contributing to
+the residual peak after microbatching, but they are process-local samples and
+do not establish a portable cap. The benchmark-only `--cpu-arena on|off`
+option records the selected setting and does not enter the v1 or memory
+artifact.
+
+Decision: keep the production default unchanged. No throughput samples,
+cross-platform observations, or model-output parity protocol beyond the exact
+scale relationships were collected here, so a production allocator change is
+not yet justified. The current microbatch implementation remains the product
+fix; future allocator work should use this toggle with a fixed timing and
+parity protocol before changing the default or opening an upstream issue.
+
+## Boundary follow-up
+
+Date: 2026-09-01
+Status: complete
+
+The benchmark-selected passage microbatch is now validated in the embedding
+owner as `1..=256`, where 256 is the pinned fastembed internal batch size. The
+benchmark CLI reuses that owner-defined maximum; zero and 257 are rejected
+before model work. Production `Embed::load` continues to use 32.
+
+The scale runner now also requires the observed Scry embedding-call count and
+internal fastembed-batch count to equal
+`ceil(span_count / configured_microbatch_size)`, rather than accepting any
+nonzero count. The memory artifact derives source bytes, tokenizer tokens,
+spans, and padded sequence length from the pinned `Embed`/`Slice` tokenizer
+path; its checked-in value remains 257 for this fixture.
+
+The vector-parity test embeds the same 9000-word, boundary-crossing text with
+the 256-span and 32-span configurations. It compares every normalized vector
+in span order with a per-component absolute tolerance of `1e-5`; the test
+passes, so no material padding or call-boundary drift was observed under that
+rule.
+
+The process-level MCP test now adds a deterministic 900-paragraph source,
+crossing the production microbatch boundary before exercising search, handle
+exchange, provenance, neighbours, delete, and `Gone`. The actual
+`scry-benchmarks` binary also has subprocess coverage for stable help output,
+invalid over-limit selection, and read-only `--memory-check` behavior.
+
+These additions protect the caller-facing paths without changing the fixed v1
+artifact or promoting native process-memory observations to a gate.
+
 ## Iteration 1: Add-Only Matrix and Stage Diagnostics
 
 Date: 2026-08-30

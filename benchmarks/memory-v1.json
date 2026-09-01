@@ -1,0 +1,305 @@
+{
+  "schema": "scry-memory-benchmark-v1",
+  "projection_version": "memory-projection-v1",
+  "identity": {
+    "workload_id": "large-single-origin-v1",
+    "input_fingerprint": "b774895d9290c24734e206434915017d1ad8ad8f4c9b89c53fc52b33fd527aa3",
+    "source_bytes": 705600,
+    "tokenizer_tokens": 189600,
+    "spans": 747,
+    "fastembed_default_batch_size": 256,
+    "model": {
+      "name": "Xenova/bge-small-en-v1.5@ea104dacec62c0de699686887e3f920caeb4f3e3",
+      "repository": "Xenova/bge-small-en-v1.5",
+      "revision": "ea104dacec62c0de699686887e3f920caeb4f3e3",
+      "dimension": 384,
+      "limit": 512,
+      "window": 256
+    },
+    "grimoire": {
+      "source": "https://github.com/goldenwitch/grimoire.git",
+      "revision": "bd9920bc1ae79d40383fedcacea3adb87fd98109",
+      "package": "grimoire",
+      "version": "1.0.0"
+    },
+    "graph_hash": "828e1496d7fabb79cfa4dcd84fa38625c0d3d21da474a00f08db0f559940cf35",
+    "canonical_description_hash": "6718baf31b789524c065790e2d2ad9d64b4f96c9ac0889fd66acc9c4705fe31b",
+    "axes": {
+      "model_dimension": 384,
+      "model_limit": 512,
+      "padded_sequence_length": 257,
+      "scale_span_count": 747,
+      "scale_token_count": 189600
+    }
+  },
+  "scenarios": [
+    {
+      "name": "microbatch-256",
+      "microbatch_spans": 256,
+      "inferred_api_calls": 3,
+      "padded_sequence_length": 257,
+      "assumption": "one Scry call processes at most 256 spans before pooled outputs are released"
+    },
+    {
+      "name": "microbatch-64",
+      "microbatch_spans": 64,
+      "inferred_api_calls": 12,
+      "padded_sequence_length": 257,
+      "assumption": "one Scry call processes at most 64 spans before pooled outputs are released"
+    },
+    {
+      "name": "microbatch-32",
+      "microbatch_spans": 32,
+      "inferred_api_calls": 24,
+      "padded_sequence_length": 257,
+      "assumption": "one Scry call processes at most 32 spans before pooled outputs are released"
+    },
+    {
+      "name": "microbatch-16",
+      "microbatch_spans": 16,
+      "inferred_api_calls": 47,
+      "padded_sequence_length": 257,
+      "assumption": "one Scry call processes at most 16 spans before pooled outputs are released"
+    }
+  ],
+  "projections": [
+    {
+      "name": "active-raw-inference-output",
+      "unit": "bytes",
+      "resource_kind": "memory-bytes",
+      "target": "@scry/bge/output-000",
+      "basis": "logical float32 bytes for one active output tensor with shape [microbatch_spans, padded_sequence_length, model_dimension]",
+      "expression": {
+        "factors": [
+          {
+            "address": "@scry/bge/axis-000",
+            "kind": "axis"
+          },
+          {
+            "address": "@scry/bge/axis-001",
+            "kind": "axis"
+          },
+          {
+            "kind": "constant",
+            "value": 384
+          },
+          {
+            "kind": "constant",
+            "value": 4
+          }
+        ],
+        "kind": "product"
+      },
+      "values": [
+        {
+          "scenario": "microbatch-256",
+          "quantity": 101056512
+        },
+        {
+          "scenario": "microbatch-64",
+          "quantity": 25264128
+        },
+        {
+          "scenario": "microbatch-32",
+          "quantity": 12632064
+        },
+        {
+          "scenario": "microbatch-16",
+          "quantity": 6316032
+        }
+      ]
+    },
+    {
+      "name": "one-call-retained-raw-output",
+      "unit": "bytes",
+      "resource_kind": "memory-bytes",
+      "target": "@scry/bge/output-000",
+      "basis": "logical float32 bytes if one Scry API call retains all raw output rows for the complete scale fixture before pooling",
+      "expression": {
+        "factors": [
+          {
+            "address": "@scry/benchmark/axis-span-count",
+            "kind": "axis"
+          },
+          {
+            "address": "@scry/bge/axis-001",
+            "kind": "axis"
+          },
+          {
+            "kind": "constant",
+            "value": 384
+          },
+          {
+            "kind": "constant",
+            "value": 4
+          }
+        ],
+        "kind": "product"
+      },
+      "values": [
+        {
+          "scenario": "microbatch-256",
+          "quantity": 294879744
+        },
+        {
+          "scenario": "microbatch-64",
+          "quantity": 294879744
+        },
+        {
+          "scenario": "microbatch-32",
+          "quantity": 294879744
+        },
+        {
+          "scenario": "microbatch-16",
+          "quantity": 294879744
+        }
+      ]
+    },
+    {
+      "name": "final-pooled-embeddings",
+      "unit": "bytes",
+      "resource_kind": "memory-bytes",
+      "target": "@scry/bge/input-000",
+      "basis": "logical float32 bytes retained for one final vector per scale-fixture span until atomic record preparation completes",
+      "expression": {
+        "factors": [
+          {
+            "address": "@scry/benchmark/axis-span-count",
+            "kind": "axis"
+          },
+          {
+            "kind": "constant",
+            "value": 384
+          },
+          {
+            "kind": "constant",
+            "value": 4
+          }
+        ],
+        "kind": "product"
+      },
+      "values": [
+        {
+          "scenario": "microbatch-256",
+          "quantity": 1147392
+        },
+        {
+          "scenario": "microbatch-64",
+          "quantity": 1147392
+        },
+        {
+          "scenario": "microbatch-32",
+          "quantity": 1147392
+        },
+        {
+          "scenario": "microbatch-16",
+          "quantity": 1147392
+        }
+      ]
+    },
+    {
+      "name": "active-model-input-tensors",
+      "unit": "bytes",
+      "resource_kind": "memory-bytes",
+      "target": "@scry/bge/input-000",
+      "basis": "logical int64 bytes for the three model input tensors at one active padded inference batch",
+      "expression": {
+        "factors": [
+          {
+            "address": "@scry/bge/axis-000",
+            "kind": "axis"
+          },
+          {
+            "address": "@scry/bge/axis-001",
+            "kind": "axis"
+          },
+          {
+            "kind": "constant",
+            "value": 3
+          },
+          {
+            "kind": "constant",
+            "value": 8
+          }
+        ],
+        "kind": "product"
+      },
+      "values": [
+        {
+          "scenario": "microbatch-256",
+          "quantity": 1579008
+        },
+        {
+          "scenario": "microbatch-64",
+          "quantity": 394752
+        },
+        {
+          "scenario": "microbatch-32",
+          "quantity": 197376
+        },
+        {
+          "scenario": "microbatch-16",
+          "quantity": 98688
+        }
+      ]
+    }
+  ],
+  "resource_charges": [
+    {
+      "projection": "active-raw-inference-output",
+      "scenario": "microbatch-256",
+      "target": "@scry/bge/output-000",
+      "resource": "memory-bytes",
+      "quantity": 101056512
+    },
+    {
+      "projection": "active-raw-inference-output",
+      "scenario": "microbatch-64",
+      "target": "@scry/bge/output-000",
+      "resource": "memory-bytes",
+      "quantity": 25264128
+    },
+    {
+      "projection": "active-raw-inference-output",
+      "scenario": "microbatch-32",
+      "target": "@scry/bge/output-000",
+      "resource": "memory-bytes",
+      "quantity": 12632064
+    },
+    {
+      "projection": "active-raw-inference-output",
+      "scenario": "microbatch-16",
+      "target": "@scry/bge/output-000",
+      "resource": "memory-bytes",
+      "quantity": 6316032
+    },
+    {
+      "projection": "final-pooled-embeddings",
+      "scenario": "microbatch-256",
+      "target": "@scry/bge/input-000",
+      "resource": "memory-bytes",
+      "quantity": 1147392
+    },
+    {
+      "projection": "final-pooled-embeddings",
+      "scenario": "microbatch-64",
+      "target": "@scry/bge/input-000",
+      "resource": "memory-bytes",
+      "quantity": 1147392
+    },
+    {
+      "projection": "final-pooled-embeddings",
+      "scenario": "microbatch-32",
+      "target": "@scry/bge/input-000",
+      "resource": "memory-bytes",
+      "quantity": 1147392
+    },
+    {
+      "projection": "final-pooled-embeddings",
+      "scenario": "microbatch-16",
+      "target": "@scry/bge/input-000",
+      "resource": "memory-bytes",
+      "quantity": 1147392
+    }
+  ]
+}

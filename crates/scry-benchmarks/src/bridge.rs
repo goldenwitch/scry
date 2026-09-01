@@ -63,10 +63,22 @@ pub(crate) struct StaticModel {
     pub(crate) raw_graph_hash: String,
     pub(crate) canonical_hash: String,
     pub(crate) axes: BTreeMap<Address, u64>,
+    pub(crate) axes_by_symbol: BTreeMap<String, Address>,
+    pub(crate) memory: MemoryFacts,
     pub(crate) macs: CostModel,
     pub(crate) fma_flops: CostModel,
     pub(crate) matmul_group: Address,
     pub(crate) operator_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Debug)]
+pub(crate) struct MemoryFacts {
+    pub(crate) output_batch_symbol: String,
+    pub(crate) output_sequence_symbol: String,
+    pub(crate) output_dimension: u64,
+    pub(crate) output_element_width: u64,
+    pub(crate) input_tensor_count: u64,
+    pub(crate) input_element_width: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,6 +89,7 @@ pub(crate) struct BridgeError {
 type BuildParts = (
     Description,
     BTreeMap<Address, u64>,
+    BTreeMap<String, Address>,
     CostModel,
     CostModel,
     Address,
@@ -88,9 +101,11 @@ pub(crate) fn build_static_model(
     config: BridgeConfig,
 ) -> Result<StaticModel, BridgeError> {
     let graph = parse_model(model_bytes).map_err(|err| error(err.to_string()))?;
+    let memory = memory_facts(&graph)?;
     let raw_graph_hash = hex(&Hash::hash(model_bytes));
     let builder = Builder::new(graph, config)?;
-    let (description, axes, macs, fma_flops, matmul_group, operator_counts) = builder.build()?;
+    let (description, axes, axes_by_symbol, macs, fma_flops, matmul_group, operator_counts) =
+        builder.build()?;
     let schemas = prototype_schemas().map_err(|err| error(err.to_string()))?;
     validate_description(&description, &schemas)
         .map_err(|errors| error(format_validation_errors(&errors)))?;
@@ -105,11 +120,145 @@ pub(crate) fn build_static_model(
         raw_graph_hash,
         canonical_hash,
         axes,
+        axes_by_symbol,
+        memory,
         macs,
         fma_flops,
         matmul_group,
         operator_counts,
     })
+}
+
+fn memory_facts(graph: &ModelGraph) -> Result<MemoryFacts, BridgeError> {
+    let (batch, sequence, dimension, output_element_width) = output_memory_facts(graph)?;
+    let (input_tensor_count, input_element_width) = input_memory_facts(graph, &batch, &sequence)?;
+    Ok(MemoryFacts {
+        output_batch_symbol: batch,
+        output_sequence_symbol: sequence,
+        output_dimension: dimension,
+        output_element_width,
+        input_tensor_count,
+        input_element_width,
+    })
+}
+
+fn output_memory_facts(graph: &ModelGraph) -> Result<(String, String, u64, u64), BridgeError> {
+    if graph.outputs.len() != 1 {
+        return Err(error("memory projection requires exactly one graph output"));
+    }
+    let output = graph
+        .outputs
+        .first()
+        .ok_or_else(|| error("memory projection model has no graph output"))?;
+    let output_shape = output
+        .shape
+        .as_ref()
+        .or_else(|| graph.values.get(&output.name))
+        .ok_or_else(|| error("memory projection output has no shape"))?;
+    let [
+        Dimension::Symbolic(batch),
+        Dimension::Symbolic(sequence),
+        Dimension::Literal(dimension),
+    ] = output_shape.dimensions.as_slice()
+    else {
+        return Err(error(
+            "memory projection output must have symbolic batch and sequence dimensions plus a literal embedding dimension",
+        ));
+    };
+    if *dimension != MODEL_DIMENSION {
+        return Err(error(format!(
+            "memory projection output dimension is {dimension}, expected {MODEL_DIMENSION}"
+        )));
+    }
+    let output_element_type = graph
+        .element_types
+        .get(&output.name)
+        .copied()
+        .ok_or_else(|| error("memory projection output has no element type"))?;
+    let output_element_width = element_width(output_element_type).ok_or_else(|| {
+        error(format!(
+            "memory projection does not support output ONNX element type {output_element_type}"
+        ))
+    })?;
+    if output_element_type != 1 {
+        return Err(error(format!(
+            "memory projection output must be float32, got ONNX element type {output_element_type}"
+        )));
+    }
+    Ok((
+        batch.clone(),
+        sequence.clone(),
+        *dimension,
+        output_element_width,
+    ))
+}
+
+fn input_memory_facts(
+    graph: &ModelGraph,
+    batch: &str,
+    sequence: &str,
+) -> Result<(u64, u64), BridgeError> {
+    if graph.inputs.len() != 3 {
+        return Err(error(format!(
+            "memory projection requires 3 graph inputs, got {}",
+            graph.inputs.len()
+        )));
+    }
+    for input in &graph.inputs {
+        let element_type = graph
+            .element_types
+            .get(&input.name)
+            .copied()
+            .ok_or_else(|| {
+                error(format!(
+                    "memory projection input `{}` has no element type",
+                    input.name
+                ))
+            })?;
+        if element_type != 7 {
+            return Err(error(
+                "memory projection inputs must all use ONNX int64 element type",
+            ));
+        }
+        let shape = input
+            .shape
+            .as_ref()
+            .or_else(|| graph.values.get(&input.name))
+            .ok_or_else(|| {
+                error(format!(
+                    "memory projection input `{}` has no shape",
+                    input.name
+                ))
+            })?;
+        let [
+            Dimension::Symbolic(input_batch),
+            Dimension::Symbolic(input_sequence),
+        ] = shape.dimensions.as_slice()
+        else {
+            return Err(error(format!(
+                "memory projection input `{}` must have symbolic batch and sequence dimensions",
+                input.name
+            )));
+        };
+        if input_batch != batch || input_sequence != sequence {
+            return Err(error(format!(
+                "memory projection input `{}` does not share output batch and sequence dimensions",
+                input.name
+            )));
+        }
+    }
+    let input_tensor_count = u64::try_from(graph.inputs.len())
+        .map_err(|_| error("memory projection input count overflowed"))?;
+    let input_element_width = element_width(7)
+        .ok_or_else(|| error("memory projection does not support input ONNX element type 7"))?;
+    Ok((input_tensor_count, input_element_width))
+}
+
+fn element_width(element_type: u64) -> Option<u64> {
+    match element_type {
+        1 | 7 => Some(if element_type == 1 { 4 } else { 8 }),
+        _ => None,
+    }
 }
 
 struct Builder {
@@ -202,6 +351,7 @@ impl Builder {
         Ok((
             self.description,
             self.axis_values,
+            self.axes_by_symbol,
             macs,
             fma_flops,
             matmul_group,
@@ -834,10 +984,108 @@ impl std::error::Error for BridgeError {}
 
 #[cfg(test)]
 mod tests {
-    use super::quote;
+    use std::collections::BTreeMap;
+
+    use super::{MemoryFacts, memory_facts, quote};
+    use crate::onnx::{Dimension, ModelGraph, Shape, ValueInfo};
+
+    fn graph(output_dimension: u64, output_element_type: u64) -> ModelGraph {
+        let batch = Dimension::Symbolic("batch_size".to_owned());
+        let sequence = Dimension::Symbolic("sequence_length".to_owned());
+        let input_shape = Some(Shape {
+            dimensions: vec![batch.clone(), sequence.clone()],
+        });
+        let output_shape = Some(Shape {
+            dimensions: vec![batch, sequence, Dimension::Literal(output_dimension)],
+        });
+        let input_names = ["input_ids", "attention_mask", "token_type_ids"];
+        let inputs = input_names
+            .iter()
+            .map(|name| ValueInfo {
+                name: (*name).to_owned(),
+                shape: input_shape.clone(),
+                element_type: Some(7),
+                values: Vec::new(),
+            })
+            .collect();
+        let outputs = vec![ValueInfo {
+            name: "last_hidden_state".to_owned(),
+            shape: output_shape,
+            element_type: Some(output_element_type),
+            values: Vec::new(),
+        }];
+        let element_types = BTreeMap::from([
+            ("input_ids".to_owned(), 7),
+            ("attention_mask".to_owned(), 7),
+            ("token_type_ids".to_owned(), 7),
+            ("last_hidden_state".to_owned(), output_element_type),
+        ]);
+        ModelGraph {
+            nodes: Vec::new(),
+            inputs,
+            outputs,
+            initializers: Vec::new(),
+            opsets: BTreeMap::new(),
+            values: BTreeMap::new(),
+            tensor_values: BTreeMap::new(),
+            tensor_dimensions: BTreeMap::new(),
+            element_types,
+        }
+    }
 
     #[test]
     fn opaque_metadata_quotes_control_text() {
         assert_eq!(quote("a\"b"), "\"a\\\"b\"");
+    }
+
+    #[test]
+    fn memory_facts_accept_the_pinned_tensor_layout() {
+        let Ok(MemoryFacts {
+            output_batch_symbol,
+            output_sequence_symbol,
+            output_dimension,
+            output_element_width,
+            input_tensor_count,
+            input_element_width,
+        }) = memory_facts(&graph(384, 1))
+        else {
+            unreachable!()
+        };
+        assert_eq!(output_batch_symbol, "batch_size");
+        assert_eq!(output_sequence_symbol, "sequence_length");
+        assert_eq!(output_dimension, 384);
+        assert_eq!(output_element_width, 4);
+        assert_eq!(input_tensor_count, 3);
+        assert_eq!(input_element_width, 8);
+    }
+
+    #[test]
+    fn memory_facts_reject_a_changed_output_dimension() {
+        let Err(error) = memory_facts(&graph(385, 1)) else {
+            unreachable!()
+        };
+        assert!(error.to_string().contains("output dimension"));
+    }
+
+    #[test]
+    fn memory_facts_reject_an_unsupported_output_type() {
+        let Err(error) = memory_facts(&graph(384, 10)) else {
+            unreachable!()
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("does not support output ONNX element type")
+        );
+    }
+
+    #[test]
+    fn memory_facts_reject_a_changed_input_count() {
+        let mut graph = graph(384, 1);
+        let _ = graph.inputs.pop();
+        let Err(error) = memory_facts(&graph) else {
+            unreachable!()
+        };
+        assert!(error.to_string().contains("requires 3 graph inputs"));
     }
 }

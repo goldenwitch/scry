@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-benchmark-instrumentation = []
+benchmark-instrumentation = ["dep:ort"]
 
 # The three named in architecture.md, and nothing a later node has not asked
 # for yet. fastembed's defaults reach for the platform's TLS, for image models,
@@ -29,6 +29,11 @@ fastembed = { version = "5.17.3", default-features = false, features = [
     "ort-download-binaries-rustls-tls",
 ] }
 hmac-sha256 = "1.1.14"
+ort = { version = "=2.0.0-rc.12", default-features = false, features = [
+    "api-24",
+    "ndarray",
+    "std",
+], optional = true }
 redb = "4.1.0"
 tokenizers = { version = "0.22.2", default-features = false, features = [
     "onig",
