@@ -87,6 +87,11 @@ impl Sampler {
         }
         let stop = Arc::new(AtomicBool::new(false));
         let observed = Arc::new(Mutex::new(MaximumObservedMemory::default()));
+        let initial = sample_process(&mut System::new(), Pid::from_u32(std::process::id()))?;
+        observed
+            .lock()
+            .map_err(|_| "native memory sampler state was poisoned".to_owned())?
+            .observe(initial)?;
         let thread_stop = Arc::clone(&stop);
         let thread_observed = Arc::clone(&observed);
         let join = thread::Builder::new()
@@ -115,9 +120,6 @@ impl Sampler {
             .observed
             .lock()
             .map_err(|_| "native memory sampler state was poisoned".to_owned())?;
-        if observed.samples == 0 {
-            return Err("native memory sampler collected no samples".to_owned());
-        }
         Ok(*observed)
     }
 }
@@ -194,6 +196,16 @@ mod tests {
     #[test]
     fn a_zero_interval_is_rejected() {
         assert!(Sampler::start(Duration::ZERO).is_err());
+    }
+
+    #[cfg(any(windows, unix))]
+    #[test]
+    fn finishing_immediately_still_has_an_initial_observation() {
+        let Ok(sampler) = Sampler::start(Duration::from_millis(1)) else {
+            unreachable!()
+        };
+        let result = sampler.finish();
+        assert!(result.is_ok_and(|observed| observed.samples >= 1));
     }
 
     #[test]

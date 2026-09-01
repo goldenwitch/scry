@@ -318,10 +318,11 @@ Accept: all available checks pass, both artifacts remain exact, and residual nat
 -> mcp-boundary
 -> sampler-label
 -> vector-parity
-> Final follow-up validation passes: all-features workspace tests (139 library, 15 integration, 13 benchmark unit, 1 CLI, 2 MCP unit, 1 MCP process, and doc tests), strict Clippy, formatting, workspace docs, cargo-deny with existing warnings only, and the normal no-feature scry check.
+> Final follow-up validation passes: all-features workspace tests (141 library, 15 integration, 14 benchmark unit, 1 CLI, 2 MCP unit, 1 MCP process, and doc tests), strict Clippy, formatting, workspace docs, cargo-deny with existing warnings only, and the normal no-feature scry check.
 > The finalized scale run at the fixed 32-span boundary preserved 705600 bytes, 189600 tokens, 747 spans, 24 embedding calls, 24 inferred batches, 747 vectors, one write, and an upserted outcome; the largest observed embedding call was 32 passages. Windows native diagnostics reported 2688 samples, 712204288 maximum-observed `working_set_bytes`, and 806268928 maximum-observed `private_bytes` at the 10 ms interval.
 > The successful scale CLI subprocess, add-only matrix, exact memory artifact check, and exact v1 baseline check all pass; native values remain diagnostic and no artifact changed.
 > The final diff contains no incidental CI-run or branch-commit references; README benchmark wording points to the stable CI workflow and baseline artifact.
+> High-value follow-up fixes now reject truncated benchmark shape inputs, take a synchronous initial native-memory sample before starting the sampler thread, and compare fixed-pipeline vectors against one-at-a-time passage embeddings in span order within `1e-5`. The nested custom memory-output directory behavior remains tracked separately in issue #6.
 ---
 [checkpoint-followup] Review final boundary coherence (complete)
 Review the follow-up fixes against the memory and caller-facing contracts.
@@ -331,7 +332,7 @@ Files: memory.vine and performance.md.
 Do: validate the graph and confirm the fixed product boundary, graph-derived byte projections, multi-batch MCP path, CLI subprocess path, and maximum-observed sampler language.
 Accept: the graph has no islands or cycles, all boundary tests pass, no unsupported process-memory guarantee is made, and residual whole-origin allocation risk is named for later work.
 -> validation-followup
-> The 18-task follow-up graph validates with no islands or cycles. The fixed 32-span product boundary, graph-derived memory facts, multi-batch MCP E2E, benchmark CLI subprocess path, and maximum-observed sampler semantics are all covered.
+> The 18-task follow-up graph validates with no islands or cycles. The fixed 32-span product boundary, graph-derived memory facts, multi-batch MCP E2E, benchmark CLI subprocess path, maximum-observed sampler semantics, truncation refusal, and vector-order parity are all covered.
 > The fixed v1 artifact and separate memory-v1 artifact remain exact; one-origin atomic visibility, refusal behavior, and normal-build feature isolation remain intact. Residual final-vector/record and ORT allocator behavior are explicitly diagnostic follow-up limits rather than unsupported guarantees.
 ---
 [bounded-size] Fix the product-owned passage boundary (complete)

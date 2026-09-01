@@ -200,7 +200,7 @@ The native sampler starts after the origin set is prepared and runs only while
 resident field is reported as `max_observed_resident_bytes` with a separate
 `resident_metric` label (`working_set_bytes` on Windows or `resident_set_bytes`
 on Unix). The benchmark binary has subprocess coverage for a successful scale
-run at microbatch 32, and the assertion checks stable logical fields without
+run through the fixed 32-span boundary, and the assertion checks stable logical fields without
 asserting machine-local native values.
 
 The finalized Windows microbatch-32 run reported 2,688 samples,
@@ -219,10 +219,18 @@ The process-level MCP test now adds a deterministic 900-paragraph source,
 crossing the production microbatch boundary before exercising search, handle
 exchange, provenance, neighbours, delete, and `Gone`. The actual
 `scry-benchmarks` binary also has subprocess coverage for stable help output,
-invalid over-limit selection, and read-only `--memory-check` behavior.
+the fixed scale pipeline, and read-only `--memory-check` behavior.
 
 These additions protect the caller-facing paths without changing the fixed v1
 artifact or promoting native process-memory observations to a gate.
+
+The follow-up hardens the diagnostic boundaries without adding controls to the
+product path. Benchmark shape measurement refuses passages that the fastembed
+tokenizer would truncate, sampler startup records a synchronous initial
+observation, and the production fixed-boundary test compares every vector with
+one-at-a-time passage embeddings in span order under a `1e-5` component delta.
+The nested custom memory-output directory behavior is tracked separately in
+issue #6.
 
 ## Iteration 1: Add-Only Matrix and Stage Diagnostics
 

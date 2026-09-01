@@ -137,6 +137,15 @@ impl Embed {
             .tokenizer
             .encode_batch(inputs, true)
             .map_err(io::Error::other)?;
+        if encodings
+            .iter()
+            .any(|encoding| !encoding.get_overflowing().is_empty())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "a benchmark passage is longer than the model accepts",
+            ));
+        }
         let Some(encoding) = encodings.first() else {
             return Err(io::Error::other("the benchmark passage batch was empty"));
         };
@@ -440,6 +449,56 @@ mod tests {
             snapshot.max_embedding_call_size(),
             passage_count.min(PASSAGE_MICROBATCH_SIZE) as u64
         );
+    }
+
+    #[cfg(feature = "benchmark-instrumentation")]
+    #[test]
+    fn a_sliced_batch_preserves_passage_order_and_values() {
+        let (mut embed, slice) = seams();
+        let Ok(sliced) = slice.cut(Text::from(long(9000))) else {
+            unreachable!()
+        };
+        let passages = match sliced.passages() {
+            Ok(passages) => passages,
+            Err(error) => unreachable!("{error}"),
+        };
+        let actual = match embed.passages_from_slice(&sliced) {
+            Ok(embeddings) => embeddings,
+            Err(error) => unreachable!("{error}"),
+        };
+        let mut expected = Vec::with_capacity(passages.len());
+        for text in passages {
+            let Ok(embedding) = passage(&mut embed, text) else {
+                unreachable!()
+            };
+            expected.push(embedding);
+        }
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+            assert_eq!(actual.model(), expected.model());
+            let maximum_delta = actual
+                .vector()
+                .as_slice()
+                .iter()
+                .zip(expected.vector().as_slice())
+                .map(|(actual, expected)| (actual - expected).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(
+                maximum_delta <= 1e-5,
+                "embedding {index} changed by {maximum_delta}"
+            );
+        }
+    }
+
+    #[cfg(feature = "benchmark-instrumentation")]
+    #[test]
+    fn benchmark_shape_refuses_a_passage_that_would_be_truncated() {
+        let embed = embed();
+        let passages = vec![long(2000)];
+        let Err(error) = embed.benchmark_padded_sequence_length(&passages) else {
+            unreachable!("an over-limit benchmark passage was accepted")
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
     }
 
     #[test]
