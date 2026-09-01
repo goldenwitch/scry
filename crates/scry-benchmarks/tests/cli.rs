@@ -17,24 +17,17 @@ fn benchmark_cli_exposes_stable_modes_and_checks_memory_artifact()
     assert!(help_text.contains("--scale"));
     assert!(help_text.contains("--memory"));
 
-    let invalid = Command::new(env!("CARGO_BIN_EXE_scry-benchmarks"))
-        .args(["--scale", "--microbatch-size", "257"])
-        .output()?;
-    assert!(!invalid.status.success());
-    let invalid_text = String::from_utf8(invalid.stderr)?;
-    assert!(invalid_text.contains("microbatch-size must be at most 256"));
-
     let cache = env::var_os("SCRY_MODEL_CACHE")
         .map_or_else(|| env::temp_dir().join("scry-model-cache"), PathBuf::from);
     let scale = Command::new(env!("CARGO_BIN_EXE_scry-benchmarks"))
         .args(["--cache"])
         .arg(&cache)
-        .args(["--scale", "--microbatch-size", "32"])
+        .arg("--scale")
         .output()?;
     assert!(scale.status.success());
     let scale_text = String::from_utf8(scale.stdout)?;
     assert!(scale_text.contains("scale=large-single-origin-v1"));
-    assert!(scale_text.contains("configured_microbatch_size=32"));
+    assert!(scale_text.contains("passage_microbatch_size=32"));
     assert!(scale_text.contains("max_observed_resident_bytes="));
     #[cfg(windows)]
     assert!(scale_text.contains("resident_metric=working_set_bytes"));

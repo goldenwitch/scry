@@ -901,7 +901,6 @@ version = "0.1.0"
 dependencies = [
  "fastembed",
  "hmac-sha256",
- "ort",
  "redb",
  "tokenizers",
  "ureq",

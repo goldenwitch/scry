@@ -191,17 +191,14 @@ The scale and memory commands are separate from the v1 gate:
 
 ```text
 cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --scale
-cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --scale --microbatch-size 32
 cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --memory
 cargo run --quiet --locked --package scry-benchmarks -- --cache /tmp/scry-model-cache --memory-check benchmarks/memory-v1.json
 ```
 
-`--scale` runs the deterministic large-origin add fixture and reports exact
-source/token/span/vector relationships alongside process-local native-memory
-diagnostics. `--microbatch-size` selects a candidate in the safe range 1..=256
-for the scale run; the product default is 32 spans per embedding call. The benchmark-only
-`--cpu-arena on|off` option selects the ORT CPU arena setting for allocator
-experiments; its default is unchanged when the option is absent. `--memory` generates
+`--scale` runs the deterministic large-origin add fixture through the fixed
+product passage pipeline and reports exact source/token/span/vector
+relationships alongside process-local native-memory diagnostics. The pipeline
+owns a 32-span passage boundary; it is not a benchmark argument. `--memory` generates
 `benchmarks/memory-v1.json`; its Grimoire
 projections compare named microbatch scenarios using the pinned model
 dimension, dtype width, padded sequence length, and measured scale span count.

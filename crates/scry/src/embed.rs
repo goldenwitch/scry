@@ -3,7 +3,6 @@
 //! Everything fastembed is kept behind this file, so no other part of scry
 //! holds an inference session, a tokenizer, or a bare `Vec<f32>`.
 
-use core::num::NonZeroUsize;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::fs;
 use std::io;
@@ -44,17 +43,8 @@ const LIMIT: usize = 512;
 /// embedding call until pooling completes.
 const FASTEMBED_BATCH_SIZE: usize = 256;
 
-/// The largest passage batch sent through one fastembed call.
-const PASSAGE_MICROBATCH_SIZE: usize = 32;
-
-/// The default passage microbatch exposed to benchmark tooling.
-#[cfg(feature = "benchmark-instrumentation")]
-pub const DEFAULT_PASSAGE_MICROBATCH_SIZE: usize = PASSAGE_MICROBATCH_SIZE;
-
-/// The largest passage microbatch that keeps one Scry call within fastembed's
-/// own retained internal batch.
-#[cfg(feature = "benchmark-instrumentation")]
-pub const MAX_PASSAGE_MICROBATCH_SIZE: usize = FASTEMBED_BATCH_SIZE;
+/// The passage batch sent through one fastembed call.
+pub const PASSAGE_MICROBATCH_SIZE: usize = 32;
 
 /// What a query is prefixed with, from the model list table on the BAAI model
 /// card. A passage takes no prefix.
@@ -91,7 +81,6 @@ pub struct Embed {
     model: Model,
     tokenizer_file: Vec<u8>,
     embedder: TextEmbedding,
-    passage_microbatch_size: NonZeroUsize,
 }
 
 impl Embed {
@@ -107,36 +96,30 @@ impl Embed {
     /// The network, the disk, and the ONNX Runtime, all of which are weather
     /// rather than any of the refusals scry names.
     pub fn load(cache: &Path) -> io::Result<Self> {
-        Self::load_with_microbatch_size_and_cpu_arena(cache, PASSAGE_MICROBATCH_SIZE, None)
-    }
-
-    /// Loads the pinned model with a benchmark-selected passage microbatch.
-    ///
-    /// # Errors
-    ///
-    /// The same model-loading failures as [`Self::load`], or a zero passage
-    /// microbatch size.
-    #[cfg(feature = "benchmark-instrumentation")]
-    pub fn load_with_passage_microbatch_size(
-        cache: &Path,
-        passage_microbatch_size: usize,
-    ) -> io::Result<Self> {
-        Self::load_with_microbatch_size_and_cpu_arena(cache, passage_microbatch_size, None)
-    }
-
-    /// Loads the pinned model with a benchmark-selected CPU arena setting.
-    ///
-    /// # Errors
-    ///
-    /// The same model-loading failures as [`Self::load`], or a zero passage
-    /// microbatch size.
-    #[cfg(feature = "benchmark-instrumentation")]
-    pub fn load_with_passage_microbatch_size_and_cpu_arena(
-        cache: &Path,
-        passage_microbatch_size: usize,
-        cpu_arena: Option<bool>,
-    ) -> io::Result<Self> {
-        Self::load_with_microbatch_size_and_cpu_arena(cache, passage_microbatch_size, cpu_arena)
+        let model = model().ok_or_else(|| {
+            io::Error::other("the pinned dimension and limit do not describe a model")
+        })?;
+        let tokenizer_file = file(cache, TOKENIZER)?;
+        let defined = UserDefinedEmbeddingModel::new(
+            file(cache, ONNX)?,
+            TokenizerFiles {
+                tokenizer_file: tokenizer_file.clone(),
+                config_file: file(cache, CONFIG)?,
+                special_tokens_map_file: file(cache, SPECIAL_TOKENS_MAP)?,
+                tokenizer_config_file: file(cache, TOKENIZER_CONFIG)?,
+            },
+        )
+        .with_pooling(Pooling::Cls);
+        let embedder = TextEmbedding::try_new_from_user_defined(
+            defined,
+            InitOptionsUserDefined::new().with_max_length(LIMIT),
+        )
+        .map_err(io::Error::other)?;
+        Ok(Self {
+            model,
+            tokenizer_file,
+            embedder,
+        })
     }
 
     /// Returns the padded sequence length the model tokenizer assigns to a
@@ -158,52 +141,6 @@ impl Embed {
             return Err(io::Error::other("the benchmark passage batch was empty"));
         };
         Ok(encoding.len())
-    }
-
-    fn load_with_microbatch_size_and_cpu_arena(
-        cache: &Path,
-        passage_microbatch_size: usize,
-        cpu_arena: Option<bool>,
-    ) -> io::Result<Self> {
-        let passage_microbatch_size = valid_passage_microbatch_size(passage_microbatch_size)?;
-        let model = model().ok_or_else(|| {
-            io::Error::other("the pinned dimension and limit do not describe a model")
-        })?;
-        let tokenizer_file = file(cache, TOKENIZER)?;
-        let defined = UserDefinedEmbeddingModel::new(
-            file(cache, ONNX)?,
-            TokenizerFiles {
-                tokenizer_file: tokenizer_file.clone(),
-                config_file: file(cache, CONFIG)?,
-                special_tokens_map_file: file(cache, SPECIAL_TOKENS_MAP)?,
-                tokenizer_config_file: file(cache, TOKENIZER_CONFIG)?,
-            },
-        )
-        .with_pooling(Pooling::Cls);
-        #[cfg(not(feature = "benchmark-instrumentation"))]
-        let _ = cpu_arena;
-        #[cfg(feature = "benchmark-instrumentation")]
-        let options = {
-            let mut options = InitOptionsUserDefined::new().with_max_length(LIMIT);
-            if let Some(cpu_arena) = cpu_arena {
-                options = options.with_execution_providers(vec![
-                    ort::ep::CPU::default()
-                        .with_arena_allocator(cpu_arena)
-                        .build(),
-                ]);
-            }
-            options
-        };
-        #[cfg(not(feature = "benchmark-instrumentation"))]
-        let options = InitOptionsUserDefined::new().with_max_length(LIMIT);
-        let embedder =
-            TextEmbedding::try_new_from_user_defined(defined, options).map_err(io::Error::other)?;
-        Ok(Self {
-            model,
-            tokenizer_file,
-            embedder,
-            passage_microbatch_size,
-        })
     }
 
     /// The model these embeddings are frozen to.
@@ -247,7 +184,7 @@ impl Embed {
     ) -> io::Result<Vec<Embedding>> {
         let passages = sliced.passages()?;
         let mut embeddings = Vec::with_capacity(passages.len());
-        for microbatch in passages.chunks(self.passage_microbatch_size.get()) {
+        for microbatch in passages.chunks(PASSAGE_MICROBATCH_SIZE) {
             embeddings.extend(self.many(microbatch)?);
         }
         Ok(embeddings)
@@ -348,17 +285,6 @@ fn model() -> Option<Model> {
     Model::new(NAME, DIMENSION, Limit::new(LIMIT)?)
 }
 
-fn valid_passage_microbatch_size(size: usize) -> io::Result<NonZeroUsize> {
-    let size = NonZeroUsize::new(size)
-        .ok_or_else(|| io::Error::other("the passage microbatch size must be positive"))?;
-    if size.get() > FASTEMBED_BATCH_SIZE {
-        return Err(io::Error::other(format!(
-            "the passage microbatch size must be at most {FASTEMBED_BATCH_SIZE}"
-        )));
-    }
-    Ok(size)
-}
-
 /// Reads a pinned file from `cache`, fetching it first if it is not there.
 ///
 /// The file is cached under its revision, so two pins can sit side by side,
@@ -408,15 +334,13 @@ fn download(remote: &str, size: u64) -> io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DIMENSION, Embed, FASTEMBED_BATCH_SIZE, LIMIT, PASSAGE_MICROBATCH_SIZE, QUERY_PREFIX,
-        model, valid_passage_microbatch_size,
-    };
+    #[cfg(feature = "benchmark-instrumentation")]
+    use super::PASSAGE_MICROBATCH_SIZE;
+    use super::{DIMENSION, Embed, LIMIT, QUERY_PREFIX, model};
     use crate::embedding::Embedding;
     use crate::query::Query;
     use crate::scaffold::{embed, seams};
     use crate::score::Score;
-    use crate::slice::Slice;
     use crate::text::Text;
 
     /// One passage, taken out of the batch — which is the only passage path
@@ -432,14 +356,6 @@ mod tests {
     fn the_pinned_constants_describe_a_model() {
         let Some(model) = model() else { unreachable!() };
         assert_eq!(model.dimension().get(), DIMENSION);
-    }
-
-    #[test]
-    fn a_passage_microbatch_stays_within_fastembed_batching() {
-        assert!(valid_passage_microbatch_size(0).is_err());
-        assert!(valid_passage_microbatch_size(1).is_ok());
-        assert!(valid_passage_microbatch_size(FASTEMBED_BATCH_SIZE).is_ok());
-        assert!(valid_passage_microbatch_size(FASTEMBED_BATCH_SIZE + 1).is_err());
     }
 
     #[test]
@@ -515,64 +431,15 @@ mod tests {
         };
         let snapshot = collector.finish();
         assert_eq!(embeddings.len(), passage_count);
-        assert!(snapshot.embedding_calls() > 1);
+        assert_eq!(
+            snapshot.embedding_calls(),
+            passage_count.div_ceil(PASSAGE_MICROBATCH_SIZE) as u64
+        );
         assert_eq!(snapshot.embedding_batches(), snapshot.embedding_calls());
-    }
-
-    #[cfg(feature = "benchmark-instrumentation")]
-    #[test]
-    fn microbatching_preserves_vector_order_and_values() {
-        let cache = crate::scaffold::cache();
-        let mut wide = match Embed::load_with_passage_microbatch_size(&cache, FASTEMBED_BATCH_SIZE)
-        {
-            Ok(embed) => embed,
-            Err(error) => unreachable!("{error}"),
-        };
-        let mut narrow =
-            match Embed::load_with_passage_microbatch_size(&cache, PASSAGE_MICROBATCH_SIZE) {
-                Ok(embed) => embed,
-                Err(error) => unreachable!("{error}"),
-            };
-        let text = Text::from(long(9000));
-        let wide_slice = match Slice::new(&wide) {
-            Ok(slice) => slice,
-            Err(error) => unreachable!("{error}"),
-        };
-        let narrow_slice = match Slice::new(&narrow) {
-            Ok(slice) => slice,
-            Err(error) => unreachable!("{error}"),
-        };
-        let wide_sliced = match wide_slice.cut(text.clone()) {
-            Ok(sliced) => sliced,
-            Err(error) => unreachable!("{error}"),
-        };
-        let narrow_sliced = match narrow_slice.cut(text) {
-            Ok(sliced) => sliced,
-            Err(error) => unreachable!("{error}"),
-        };
-        let wide_embeddings = match wide.passages_from_slice(&wide_sliced) {
-            Ok(embeddings) => embeddings,
-            Err(error) => unreachable!("{error}"),
-        };
-        let narrow_embeddings = match narrow.passages_from_slice(&narrow_sliced) {
-            Ok(embeddings) => embeddings,
-            Err(error) => unreachable!("{error}"),
-        };
-        assert_eq!(wide_embeddings.len(), narrow_embeddings.len());
-        for (index, (wide, narrow)) in wide_embeddings.iter().zip(&narrow_embeddings).enumerate() {
-            assert_eq!(wide.model(), narrow.model());
-            let maximum_delta = wide
-                .vector()
-                .as_slice()
-                .iter()
-                .zip(narrow.vector().as_slice())
-                .map(|(wide, narrow)| (wide - narrow).abs())
-                .fold(0.0_f32, f32::max);
-            assert!(
-                maximum_delta <= 1e-5,
-                "embedding {index} changed by {maximum_delta}"
-            );
-        }
+        assert_eq!(
+            snapshot.max_embedding_call_size(),
+            passage_count.min(PASSAGE_MICROBATCH_SIZE) as u64
+        );
     }
 
     #[test]

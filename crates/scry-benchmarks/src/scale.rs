@@ -7,8 +7,7 @@ use std::time::Duration;
 
 use hmac_sha256::Hash;
 use scry::{
-    AddOutcome, BenchmarkCollector, DEFAULT_PASSAGE_MICROBATCH_SIZE, Embed, Origin, Slice, Store,
-    Text,
+    AddOutcome, BenchmarkCollector, Embed, Origin, PASSAGE_MICROBATCH_SIZE, Slice, Store, Text,
 };
 
 use crate::native_memory::{MaximumObservedMemory, ResidentMemoryKind, Sampler};
@@ -63,23 +62,10 @@ impl Drop for Workspace {
     }
 }
 
-pub(crate) fn run(
-    cache: &Path,
-    microbatch_size: Option<usize>,
-    cpu_arena: Option<bool>,
-) -> Result<(), String> {
+pub(crate) fn run(cache: &Path) -> Result<(), String> {
     let body = fixture();
     let workspace = Workspace::new()?;
-    let configured_microbatch_size = microbatch_size.unwrap_or(DEFAULT_PASSAGE_MICROBATCH_SIZE);
-    let mut embed = match cpu_arena {
-        Some(cpu_arena) => Embed::load_with_passage_microbatch_size_and_cpu_arena(
-            cache,
-            configured_microbatch_size,
-            Some(cpu_arena),
-        ),
-        None => Embed::load_with_passage_microbatch_size(cache, configured_microbatch_size),
-    }
-    .map_err(|error| error.to_string())?;
+    let mut embed = Embed::load(cache).map_err(|error| error.to_string())?;
     let slice = Slice::new(&embed).map_err(|error| error.to_string())?;
     let origin = workspace.origin(&body)?;
     let store = match Store::open(&workspace.store_path(), embed.model()) {
@@ -100,16 +86,15 @@ pub(crate) fn run(
     if !matches!(result.outcome(), AddOutcome::Upserted) {
         return Err(format!("scale add returned {:?}", result.outcome()));
     }
-    let final_embedding_bytes = validate_snapshot(&body, &snapshot, configured_microbatch_size)?;
+    let final_embedding_bytes = validate_snapshot(&body, &snapshot)?;
     println!(
-        "scale={} fingerprint={} source_bytes={} tokens={} spans={} configured_microbatch_size={} cpu_arena={} embed_api_calls={} fastembed_batch_size={} fastembed_batches={} final_embedding_vectors={} final_embedding_bytes={} write_transactions={} add_outcome=upserted native_samples={} max_observed_resident_bytes={} resident_metric={} max_observed_secondary_bytes={} secondary_metric={} sample_interval_ms={} native_basis=process-local diagnostic; setup and model loading excluded",
+        "scale={} fingerprint={} source_bytes={} tokens={} spans={} passage_microbatch_size={} embed_api_calls={} fastembed_batch_size={} fastembed_batches={} final_embedding_vectors={} final_embedding_bytes={} write_transactions={} add_outcome=upserted native_samples={} max_observed_resident_bytes={} resident_metric={} max_observed_secondary_bytes={} secondary_metric={} sample_interval_ms={} native_basis=process-local diagnostic; setup and model loading excluded",
         SCALE_ID,
         fingerprint(&body),
         snapshot.source_bytes(),
         snapshot.sliced_tokens(),
         snapshot.sliced_spans(),
-        configured_microbatch_size,
-        cpu_arena.map_or("default", |enabled| if enabled { "on" } else { "off" }),
+        PASSAGE_MICROBATCH_SIZE,
         snapshot.embedding_calls(),
         FASTEMBED_DEFAULT_BATCH_SIZE,
         snapshot.embedding_batches(),
@@ -134,11 +119,7 @@ fn resident_metric(native: &MaximumObservedMemory) -> &'static str {
     }
 }
 
-fn validate_snapshot(
-    body: &str,
-    snapshot: &scry::BenchmarkSnapshot,
-    configured_microbatch_size: usize,
-) -> Result<u64, String> {
+fn validate_snapshot(body: &str, snapshot: &scry::BenchmarkSnapshot) -> Result<u64, String> {
     if snapshot.source_bytes() != body.len() as u64
         || snapshot.sliced_tokens() != SCALE_TOKENS
         || snapshot.sliced_spans() != SCALE_SPANS
@@ -179,12 +160,12 @@ fn validate_snapshot(
         .ok_or_else(|| "scale final embedding byte count overflowed".to_owned())?;
     let span_count = usize::try_from(snapshot.sliced_spans())
         .map_err(|_| "scale span count does not fit usize".to_owned())?;
-    let expected_calls = span_count.div_ceil(configured_microbatch_size);
+    let expected_calls = span_count.div_ceil(PASSAGE_MICROBATCH_SIZE);
     let actual_calls = usize::try_from(snapshot.embedding_calls())
         .map_err(|_| "scale embedding call count does not fit usize".to_owned())?;
     let actual_batches = usize::try_from(snapshot.embedding_batches())
         .map_err(|_| "scale embedding batch count does not fit usize".to_owned())?;
-    let expected_max_call_size = span_count.min(configured_microbatch_size);
+    let expected_max_call_size = span_count.min(PASSAGE_MICROBATCH_SIZE);
     let actual_max_call_size = usize::try_from(snapshot.max_embedding_call_size())
         .map_err(|_| "scale maximum embedding call size does not fit usize".to_owned())?;
     if actual_calls != expected_calls

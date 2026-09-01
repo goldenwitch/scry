@@ -126,7 +126,9 @@ Each candidate below used the same 705,600-byte, 189,600-token,
 747-span fixture, warm pinned model cache, 10 ms sampler interval, and setup
 exclusion as the baseline above. Every run produced 747 final vectors, one
 write, and an upserted outcome. The baseline row is the earlier one-call
-implementation; candidate rows use separate Scry embedding calls.
+implementation; candidate rows are historical diagnostic runs from the
+parameterized harness. The current scale runner exercises the product-owned
+32-span boundary and exposes no selector for these candidates.
 
 | Configuration | Scry embed API calls | fastembed batches | Maximum observed resident bytes | Resident metric | Maximum observed secondary bytes | Secondary metric |
 | --- | ---: | ---: | ---: | --- | ---: | --- |
@@ -141,18 +143,19 @@ not portable bounds; they include ORT and allocator behavior. The 16-span run
 used less observed native memory but required nearly twice as many model calls
 as the 32-span run, and no throughput or latency protocol was collected here.
 
-Decision: retain 32 as the initial production default and keep 64 and 16 as
-explicit benchmark candidates. The Grimoire memory artifact expresses the
-logical tensor-size tradeoff for all three; a later decision about the default
-requires comparable throughput and native-memory samples, not this sweep alone.
+Decision: the product-owned 32-span boundary is the current production path;
+64 and 16 remain historical diagnostic candidates only. The Grimoire memory
+artifact preserves the logical tensor-size tradeoff for all three; changing
+the production boundary requires comparable throughput and native-memory
+samples, not this sweep alone.
 
 ## Large-origin memory investigation: ORT allocator disposition
 
 Date: 2026-09-01
 Status: allocator experiment captured
 
-The 32-span scale fixture was run in separate processes with the benchmark-only
-CPU arena override. The model, fixture, cache, sampler interval, and setup
+Earlier parameterized diagnostic runs used a CPU arena override at the
+32-span boundary. The model, fixture, cache, sampler interval, and setup
 exclusion were unchanged. Both runs produced 747 final vectors, one write, and
 an upserted outcome.
 
@@ -163,36 +166,34 @@ an upserted outcome.
 
 These native observations are consistent with allocator policy contributing to
 the residual peak after microbatching, but they are process-local samples and
-do not establish a portable cap. The benchmark-only `--cpu-arena on|off`
-option records the selected setting and does not enter the v1 or memory
-artifact.
+do not establish a portable cap. The allocator experiment was diagnostic only
+and is not a product or current benchmark-runner option.
 
 Decision: keep the production default unchanged. No throughput samples,
 cross-platform observations, or model-output parity protocol beyond the exact
 scale relationships were collected here, so a production allocator change is
 not yet justified. The current microbatch implementation remains the product
-fix; future allocator work should use this toggle with a fixed timing and
-parity protocol before changing the default or opening an upstream issue.
+fix; future allocator work should use a separately-owned benchmark harness
+with a fixed timing and parity protocol before changing the default or opening
+an upstream issue.
 
 ## Boundary follow-up
 
 Date: 2026-09-01
 Status: complete
 
-The benchmark-selected passage microbatch is now validated in the embedding
-owner as `1..=256`, where 256 is the pinned fastembed internal batch size. The
-benchmark CLI reuses that owner-defined maximum; zero and 257 are rejected
-before model work. Production `Embed::load` continues to use 32.
+The passage microbatch is now a product-owned constant of 32 spans, below the
+pinned fastembed internal batch size of 256. `Embed::load` is the one
+constructor and always builds that bounded pipeline; the benchmark CLI has no
+microbatch or allocator arguments.
 
-The scale runner now also requires the observed Scry embedding-call count and
-internal fastembed-batch count to equal
-`ceil(span_count / configured_microbatch_size)`, rather than accepting any
-nonzero count. It also requires the largest observed embedding-call size to
-equal `min(span_count, configured_microbatch_size)`. The collector records that
-per-call maximum from the actual `Embed::many` inputs. The memory artifact
-derives source bytes, tokenizer tokens, spans, and padded sequence length from
-the pinned `Embed`/`Slice` tokenizer path; its checked-in value remains 257 for
-this fixture.
+The scale runner requires the observed Scry embedding-call count and internal
+fastembed-batch count to equal `ceil(span_count / 32)`. It also requires the
+largest observed embedding-call size to equal `min(span_count, 32)`. The
+collector records that per-call maximum from the actual `Embed::many` inputs.
+The memory artifact derives source bytes, tokenizer tokens, spans, and padded
+sequence length from the pinned `Embed`/`Slice` tokenizer path; its checked-in
+value remains 257 for this fixture.
 
 The native sampler starts after the origin set is prepared and runs only while
 `Store::add` executes; it is joined before the add collector is finished. Its
@@ -208,11 +209,11 @@ The finalized Windows microbatch-32 run reported 2,688 samples,
 747 spans, 24 embedding calls, 24 inferred fastembed batches, 747 final
 vectors, one write, and an upserted outcome.
 
-The vector-parity test embeds the same 9000-word, boundary-crossing text with
-the 256-span and 32-span configurations. It compares every normalized vector
-in span order with a per-component absolute tolerance of `1e-5`; the test
-passes, so no material padding or call-boundary drift was observed under that
-rule.
+An earlier parameterized vector-parity run embedded the same 9000-word,
+boundary-crossing text with the 256-span and 32-span configurations. It
+compared every normalized vector in span order with a per-component absolute
+tolerance of `1e-5`; that run passed, so no material padding or call-boundary
+drift was observed under that rule.
 
 The process-level MCP test now adds a deterministic 900-paragraph source,
 crossing the production microbatch boundary before exercising search, handle
