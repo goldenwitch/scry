@@ -13,8 +13,8 @@ useful for local comparison; it is never a machine-agnostic CI gate.
 
 - Target: the library `Store::add` path.
 - Current contract: canonical origins are processed sequentially; each origin
-  fetches, slices, embeds all of its spans in one model call, prepares one
-  record, and commits one replacement transaction.
+  fetches, slices, embeds its spans in validated passage microbatches, prepares
+  one record, and commits one replacement transaction.
 - Optimization rule: measure an owning boundary before changing it.
 - Contract rule: cross-document embedding and grouped persistence require a
   reviewed set-upsert decision; they are not implicit optimizations.
@@ -101,8 +101,10 @@ pinned fastembed default batch size and the observed span count; scry does not
 observe fastembed's private `EmbeddingOutput` vector directly.
 
 Native diagnostic observations from the same run were 2,898 samples,
-`max_observed_working_set_bytes=4062822400`, and
-`max_observed_private_bytes=5180784640` (`PrivateUsage` on Windows). These values
+`max_observed_resident_bytes=4062822400` with
+`resident_metric=working_set_bytes`, and
+`max_observed_secondary_bytes=5180784640` with
+`secondary_metric=private_bytes` (`PrivateUsage` on Windows). These values
 include native runtime and allocator behavior and are not portable memory
 limits or CI gates. They show that a sub-megabyte source fixture with 747
 spans can still reach multi-gigabyte process memory when one fastembed call
@@ -126,12 +128,12 @@ exclusion as the baseline above. Every run produced 747 final vectors, one
 write, and an upserted outcome. The baseline row is the earlier one-call
 implementation; candidate rows use separate Scry embedding calls.
 
-| Configuration | Scry embed API calls | fastembed batches | Maximum observed working-set bytes | Maximum observed private bytes |
-| --- | ---: | ---: | ---: | ---: |
-| baseline one-call | 1 | 3 | 4062822400 | 5180784640 |
-| microbatch 64 | 12 | 12 | 1228500992 | 1432776704 |
-| microbatch 32 | 24 | 24 | 713588736 | 808693760 |
-| microbatch 16 | 47 | 47 | 457883648 | 495513600 |
+| Configuration | Scry embed API calls | fastembed batches | Maximum observed resident bytes | Resident metric | Maximum observed secondary bytes | Secondary metric |
+| --- | ---: | ---: | ---: | --- | ---: | --- |
+| baseline one-call | 1 | 3 | 4062822400 | working_set_bytes | 5180784640 | private_bytes |
+| microbatch 64 | 12 | 12 | 1228500992 | working_set_bytes | 1432776704 | private_bytes |
+| microbatch 32 | 24 | 24 | 712204288 | working_set_bytes | 806268928 | private_bytes |
+| microbatch 16 | 47 | 47 | 457883648 | working_set_bytes | 495513600 | private_bytes |
 
 The exact scale fingerprint and logical relationships remained unchanged in
 all candidate runs. The maximum observed native samples are process-local diagnostic observations,
@@ -154,10 +156,10 @@ CPU arena override. The model, fixture, cache, sampler interval, and setup
 exclusion were unchanged. Both runs produced 747 final vectors, one write, and
 an upserted outcome.
 
-| CPU arena | Maximum observed working-set bytes | Maximum observed private bytes |
-| --- | ---: | ---: |
-| off | 486580224 | 471056384 |
-| on | 715517952 | 809926656 |
+| CPU arena | Maximum observed resident bytes | Resident metric | Maximum observed secondary bytes | Secondary metric |
+| --- | ---: | --- | ---: | --- |
+| off | 486580224 | working_set_bytes | 471056384 | private_bytes |
+| on | 715517952 | working_set_bytes | 809926656 | private_bytes |
 
 These native observations are consistent with allocator policy contributing to
 the residual peak after microbatching, but they are process-local samples and
@@ -185,9 +187,26 @@ before model work. Production `Embed::load` continues to use 32.
 The scale runner now also requires the observed Scry embedding-call count and
 internal fastembed-batch count to equal
 `ceil(span_count / configured_microbatch_size)`, rather than accepting any
-nonzero count. The memory artifact derives source bytes, tokenizer tokens,
-spans, and padded sequence length from the pinned `Embed`/`Slice` tokenizer
-path; its checked-in value remains 257 for this fixture.
+nonzero count. It also requires the largest observed embedding-call size to
+equal `min(span_count, configured_microbatch_size)`. The collector records that
+per-call maximum from the actual `Embed::many` inputs. The memory artifact
+derives source bytes, tokenizer tokens, spans, and padded sequence length from
+the pinned `Embed`/`Slice` tokenizer path; its checked-in value remains 257 for
+this fixture.
+
+The native sampler starts after the origin set is prepared and runs only while
+`Store::add` executes; it is joined before the add collector is finished. Its
+resident field is reported as `max_observed_resident_bytes` with a separate
+`resident_metric` label (`working_set_bytes` on Windows or `resident_set_bytes`
+on Unix). The benchmark binary has subprocess coverage for a successful scale
+run at microbatch 32, and the assertion checks stable logical fields without
+asserting machine-local native values.
+
+The finalized Windows microbatch-32 run reported 2,688 samples,
+`max_observed_resident_bytes=712204288`, and
+`max_observed_secondary_bytes=806268928`. The logical output was unchanged:
+747 spans, 24 embedding calls, 24 inferred fastembed batches, 747 final
+vectors, one write, and an upserted outcome.
 
 The vector-parity test embeds the same 9000-word, boundary-crossing text with
 the 256-span and 32-span configurations. It compares every normalized vector

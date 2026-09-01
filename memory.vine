@@ -41,7 +41,7 @@ boundaries, and the conditions under which a field is exact or diagnostic.
 Files: docs/benchmarks.md.
 Do: distinguish `bytes` moved, `memory-bytes` resident or charged, scry-owned
 logical high-water bytes, final embedding storage, requested tensor bytes, and
-native working-set/private-memory observations. Define the identity of the
+maximum-observed resident/secondary process-memory observations. Define the identity of the
 inference microbatch and padded sequence axes separately from the fixed v1
 artifact identity. State that a sum of tensor sizes is not a peak-live claim
 without an explicit liveness schedule, and that RSS/private memory remains
@@ -80,7 +80,7 @@ gate.
 -> contract
 -> native
 > The deterministic local fixture repeats one HTML-shaped fragment 2,400 times and measures 705,600 source bytes, 189,600 tokenizer tokens, and 747 spans; its fingerprint is b774895d9290c24734e206434915017d1ad8ad8f4c9b89c53fc52b33fd527aa3.
-> The current one-call path returns 747 vectors in one Scry embedding API call, which fastembed internally splits into three inferred batches of 256; native sampling at 10 ms observed 4,062,822,400 working-set bytes and 5,180,784,640 Windows private bytes.
+> The current one-call path returns 747 vectors in one Scry embedding API call, which fastembed internally splits into three inferred batches of 256; native sampling at 10 ms observed 4,062,822,400 `working_set_bytes` and 5,180,784,640 Windows private bytes.
 > The scale command is benchmark-only and process-local; the issue URL is not fetched, native peaks remain diagnostic, and the fixed v1 artifact is unchanged.
 ---
 [native] Sample diagnostic native memory (complete)
@@ -89,7 +89,7 @@ Serves: the investigation can see whether raw outputs and ORT allocations stop
 scaling with total document spans.
 Absent: the only memory number is a post-hoc guess from managed object sizes or
 a point sample that misses the inference peak.
-Known by: peak working-set and private-memory fields where the platform exposes
+Known by: maximum-observed resident and secondary-memory fields where the platform exposes
 them, sampling interval or event boundary, process lifetime, and an explicit
 unsupported-platform result.
 Files: crates/scry-benchmarks/src/native_memory.rs,
@@ -97,7 +97,8 @@ crates/scry-benchmarks/src/main.rs, and the smallest benchmark manifest change
 needed for its diagnostic support.
 Do: measure the scale workload in a child process or with a sampler that can
 observe inside inference; use platform adapters and label Windows
-`WorkingSet64`/`PrivateMemorySize64` separately from any Unix equivalent. Keep
+`WorkingSet64`/`PrivateMemorySize64` separately from the Unix resident-set
+equivalent. Keep
 model assets, code pages, and allocator policy in the diagnostic record rather
 than subtracting invented constants. Do not add native memory to the
 machine-agnostic v1 artifact or make unsupported platforms fail deterministic
@@ -106,7 +107,7 @@ Accept: the helper has a focused test or fixture for its output shape and
 failure behavior, reports the sampling protocol with every observation, and
 cannot be imported by the supported scry or MCP product surface.
 -> contract
-> Added benchmark-only sysinfo 0.38.4 sampling with Windows WorkingSetSize as resident bytes and PrivateUsage as secondary private bytes; the sampler records interval, sample count, and metric semantics without entering v1 artifacts.
+> Added benchmark-only sysinfo 0.38.4 sampling with an explicit resident metric: Windows WorkingSetSize is `working_set_bytes`, Unix uses `resident_set_bytes`, and Windows PrivateUsage is the secondary private metric; the sampler records interval, sample count, and metric semantics without entering v1 artifacts.
 > Focused sampler tests pass; unsupported native memory is diagnostic and does not affect normal scry or MCP builds.
 ---
 [grimoire-memory] Express shape-aware allocation projections (complete)
@@ -180,7 +181,7 @@ list; add-only exact fingerprints and logical outcomes remain explainable.
 -> grimoire-memory
 -> scale
 > Store::add now processes SlicedText in validated 32-span calls, converting each result to final embeddings before the next fastembed call; all final vectors remain in memory until one atomic per-origin record commit.
-> Benchmark-only --microbatch-size selects 64, 32, or 16 for separate scale runs. The identical 747-span fixture produced 1,228,500,992/1,432,776,704 bytes at 64, 713,588,736/808,693,760 at 32, and 457,883,648/495,513,600 at 16 for working set/private memory.
+> Benchmark-only --microbatch-size selects 64, 32, or 16 for separate scale runs. The identical 747-span fixture produced 1,228,500,992/1,432,776,704 bytes at 64, 713,588,736/808,693,760 at 32, and 457,883,648/495,513,600 at 16 for maximum-observed `working_set_bytes`/`private_bytes` on Windows.
 > Focused library tests (139), benchmark tests (8), add-only fingerprints/logical counts, memory-v1 exact check, v1 baseline check, and normal no-feature scry check pass; no cross-origin batching or partial visibility was introduced.
 ---
 [allocator] Disposition residual ORT allocation (complete)
@@ -211,7 +212,7 @@ control. No unsupported ORT setting is smuggled into the microbatch change.
 -> contract
 -> microbatch
 -> native
-> A benchmark-only ORT CPU arena experiment at microbatch 32 measured 486580224 working-set/471056384 private bytes with arena off and 715517952/809926656 with arena on; all exact scale relationships and one-origin write outcome remained intact.
+> A benchmark-only ORT CPU arena experiment at microbatch 32 measured 486580224/471056384 maximum-observed `working_set_bytes`/`private_bytes` with arena off and 715517952/809926656 with arena on; all exact scale relationships and one-origin write outcome remained intact.
 > The residual native peak is allocator-sensitive, but native samples are process-local and no fixed throughput or cross-platform output-parity protocol was collected. Production allocator defaults remain unchanged; future work has a reproducible --cpu-arena on|off diagnostic control.
 ---
 [staging] Decide whether final-output staging is needed (complete)
@@ -318,7 +319,9 @@ Accept: all available checks pass, both artifacts remain exact, and residual nat
 -> mcp-boundary
 -> sampler-label
 -> vector-parity
-> Pre-push hardening validation passes: benchmark tests, CLI integration, formatting, exact memory artifact check, exact v1 baseline check, and the full previously recorded workspace gates remain coherent.
+> Final follow-up validation passes: all-features workspace tests (141 library, 15 integration, 13 benchmark unit, 1 CLI, 2 MCP unit, 1 MCP process, and doc tests), strict Clippy, formatting, workspace docs, cargo-deny with existing warnings only, and the normal no-feature scry check.
+> The finalized scale run at microbatch 32 preserved 705600 bytes, 189600 tokens, 747 spans, 24 embedding calls, 24 inferred batches, 747 vectors, one write, and an upserted outcome; the largest observed embedding call was 32 passages. Windows native diagnostics reported 2688 samples, 712204288 maximum-observed `working_set_bytes`, and 806268928 maximum-observed `private_bytes` at the 10 ms interval.
+> The successful scale CLI subprocess, add-only matrix, exact memory artifact check, and exact v1 baseline check all pass; native values remain diagnostic and no artifact changed.
 > The final diff contains no incidental CI-run or branch-commit references; README benchmark wording points to the stable CI workflow and baseline artifact.
 ---
 [checkpoint-followup] Review final boundary coherence (complete)
@@ -341,7 +344,7 @@ Files: crates/scry/src/embed.rs, crates/scry/src/lib.rs, crates/scry-benchmarks/
 Do: enforce a positive size no greater than the pinned fastembed batch size of 256 before model work begins; expose only the benchmark-feature boundary needed by the CLI; reject invalid values visibly and keep the normal product API/default unchanged.
 Accept: 1 and 256 are accepted, 0 and 257 are rejected, the scale CLI reports the selected value, and the bound has one owner rather than duplicated parser folklore.
 -> microbatch
-> The scale runner now requires observed embedding_calls and embedding_batches to equal ceil(span_count / configured_microbatch_size), so altered option wiring or default behavior fails visibly rather than passing on nonzero counts.
+> The scale runner now requires observed embedding_calls and embedding_batches to equal ceil(span_count / configured_microbatch_size), and requires the largest observed embedding-call size to equal min(span_count, configured_microbatch_size), so altered option wiring or default behavior fails visibly rather than passing on nonzero counts.
 ---
 [graph-memory] Derive memory projections from graph facts (complete)
 Remove silent hardcoded shape and dtype assumptions from the Grimoire memory artifact.
@@ -385,11 +388,16 @@ Serves: artifacts and diagnostics remain runnable through the binary invoked by 
 Absent: `--memory-check`, `--add-only`, or scale wiring breaks while internal tests remain green.
 Known by: the actual scry-benchmarks binary, exit status, diagnostic text, prepared cache path, and checked artifact.
 Files: crates/scry-benchmarks/tests/cli.rs.
-Do: invoke `--help`, reject over-limit `--microbatch-size` without model work, and run `--memory-check benchmarks/memory-v1.json` against the prepared cache. Do not assert native memory values.
-Accept: invalid range returns nonzero with a visible diagnostic; memory-check returns zero with its success line; no artifact is rewritten.
+Do: invoke `--help`, reject over-limit `--microbatch-size` without model work,
+run a successful `--scale --microbatch-size 32`, and run
+`--memory-check benchmarks/memory-v1.json` against the prepared cache. Do not
+assert native memory values.
+Accept: invalid range returns nonzero with a visible diagnostic; a scale run at
+microbatch 32 returns zero with stable logical output; memory-check returns
+zero with its success line; no artifact is rewritten.
 -> bounded-size
 -> graph-memory
-> Added crates/scry-benchmarks/tests/cli.rs subprocess coverage for the actual binary: --help exposes add-only/scale/memory, --scale --microbatch-size 257 fails with the owner-defined limit before model work, and --memory-check succeeds without rewriting memory-v1.json.
+> Added crates/scry-benchmarks/tests/cli.rs subprocess coverage for the actual binary: --help exposes add-only/scale/memory, --scale --microbatch-size 257 fails with the owner-defined limit before model work, --scale --microbatch-size 32 succeeds with stable logical output, and --memory-check succeeds without rewriting memory-v1.json.
 > The CLI integration test passes (1) against the prepared local cache and does not assert native memory values.
 ---
 [sampler-label] Name native observations precisely (complete)
@@ -398,8 +406,10 @@ Serves: diagnostic memory evidence cannot be read as a hard allocator bound.
 Absent: a 10 ms polling sampler and a field named `peak` invite stronger claims than the protocol supports.
 Known by: output field names, documentation, sampling interval, sample count, and unchanged diagnostic-only classification.
 Files: crates/scry-benchmarks/src/native_memory.rs, crates/scry-benchmarks/src/scale.rs, docs/benchmarks.md, performance.md.
-Do: rename or qualify native fields as maximum observed values, retain the sampling protocol, and update evidence without changing deterministic artifacts.
+Do: rename or qualify native fields as maximum observed values, carry the
+resident metric kind through sampling, retain the sampling protocol, and update
+evidence without changing deterministic artifacts.
 Accept: every native report identifies observation semantics and interval, no text calls it a guaranteed process peak, and the benchmark still runs.
 -> native
-> Renamed the native result type to MaximumObservedMemory and scale output fields to max_observed_working_set_bytes/max_observed_secondary_bytes; the 10 ms sampling interval and process-local diagnostic basis remain explicit.
+> Renamed the native result type to MaximumObservedMemory and scale output fields to max_observed_resident_bytes plus resident_metric/max_observed_secondary_bytes; the 10 ms sampling interval and process-local diagnostic basis remain explicit. The resident metric kind is carried through each sample and must remain stable for the run.
 > Updated performance evidence labels and confirmed no peak/process-peak wording remains in the sampler, scale output, benchmark docs, or performance log; focused benchmark tests pass (11).

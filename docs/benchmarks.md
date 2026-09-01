@@ -214,14 +214,17 @@ record bytes, final embedding storage, and selected logical live-byte
 high-water marks. These values describe scry-owned data structures and do not
 include the model file, filesystem allocation, or native runtime state.
 
-The third layer may record native working-set and private-memory observations
-with the operating system, runtime version, execution provider, process
-lifetime, and sampling protocol. These observations are useful for comparing a
-large-origin experiment under the same conditions, but allocator arenas,
-threading, page policy, and device residency make them machine-local. They
-remain diagnostic and never become a machine-agnostic CI gate. A sourced native
-observation belongs to `measurement/1`; symbolic shape arithmetic belongs to a
-cost or resource projection instead.
+The third layer may record maximum-observed resident-memory and secondary
+process-memory observations with the operating system, runtime version,
+execution provider, process lifetime, and sampling protocol. The
+`max_observed_resident_bytes` field is working-set memory on Windows and
+resident-set memory on Unix; `resident_metric` identifies which meaning was
+sampled. These observations are useful for comparing a large-origin experiment
+under the same conditions, but allocator arenas, threading, page policy, and
+device residency make them machine-local. They remain diagnostic and never
+become a machine-agnostic CI gate. A sourced native observation belongs to
+`measurement/1`; symbolic shape arithmetic belongs to a cost or resource
+projection instead.
 
 ## Excluded from gates
 

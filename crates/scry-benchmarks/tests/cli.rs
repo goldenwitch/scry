@@ -26,6 +26,21 @@ fn benchmark_cli_exposes_stable_modes_and_checks_memory_artifact()
 
     let cache = env::var_os("SCRY_MODEL_CACHE")
         .map_or_else(|| env::temp_dir().join("scry-model-cache"), PathBuf::from);
+    let scale = Command::new(env!("CARGO_BIN_EXE_scry-benchmarks"))
+        .args(["--cache"])
+        .arg(&cache)
+        .args(["--scale", "--microbatch-size", "32"])
+        .output()?;
+    assert!(scale.status.success());
+    let scale_text = String::from_utf8(scale.stdout)?;
+    assert!(scale_text.contains("scale=large-single-origin-v1"));
+    assert!(scale_text.contains("configured_microbatch_size=32"));
+    assert!(scale_text.contains("max_observed_resident_bytes="));
+    #[cfg(windows)]
+    assert!(scale_text.contains("resident_metric=working_set_bytes"));
+    #[cfg(not(windows))]
+    assert!(scale_text.contains("resident_metric=resident_set_bytes"));
+
     let artifact = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")

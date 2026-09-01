@@ -14,6 +14,7 @@ mod active {
         sliced_spans: u64,
         embedding_calls: u64,
         embedding_batches: u64,
+        max_embedding_call_size: u64,
         embedding_input_bytes: u64,
         embedding_vectors: u64,
         write_transactions: u64,
@@ -69,6 +70,12 @@ mod active {
         #[must_use]
         pub const fn embedding_batches(&self) -> u64 {
             self.embedding_batches
+        }
+
+        /// Largest number of passages sent in one embedding call.
+        #[must_use]
+        pub const fn max_embedding_call_size(&self) -> u64 {
+            self.max_embedding_call_size
         }
 
         /// Input bytes handed to the embedding model.
@@ -319,6 +326,15 @@ mod active {
         });
     }
 
+    pub(super) fn embedding_call_size(amount: usize) {
+        update(|snapshot| match u64::try_from(amount) {
+            Ok(amount) => {
+                snapshot.max_embedding_call_size = snapshot.max_embedding_call_size.max(amount);
+            }
+            Err(_) => snapshot.overflowed = true,
+        });
+    }
+
     pub(super) fn embedding_vectors(amount: usize) {
         update(|snapshot| {
             add_usize(
@@ -515,6 +531,14 @@ pub(crate) fn record_embedding_batches(amount: usize) {
 pub(crate) const fn record_embedding_batches(_: usize) {}
 
 #[cfg(feature = "benchmark-instrumentation")]
+pub(crate) fn record_embedding_call_size(amount: usize) {
+    active::embedding_call_size(amount);
+}
+
+#[cfg(not(feature = "benchmark-instrumentation"))]
+pub(crate) const fn record_embedding_call_size(_: usize) {}
+
+#[cfg(feature = "benchmark-instrumentation")]
 pub(crate) fn record_embedding_vectors(amount: usize) {
     active::embedding_vectors(amount);
 }
@@ -595,10 +619,10 @@ pub(crate) fn record_stage_duration(stage: Stage, nanos: u128) {
 mod tests {
     use super::{
         Collector, Stage, record_add_member, record_embedding_batches, record_embedding_call,
-        record_embedding_vectors, record_neighbour_passage, record_owned_logical_bytes,
-        record_provenance_lookup, record_read_transaction, record_search_document,
-        record_search_hit, record_sliced_spans, record_sliced_tokens, record_source_bytes,
-        record_stage_duration, record_write_transaction,
+        record_embedding_call_size, record_embedding_vectors, record_neighbour_passage,
+        record_owned_logical_bytes, record_provenance_lookup, record_read_transaction,
+        record_search_document, record_search_hit, record_sliced_spans, record_sliced_tokens,
+        record_source_bytes, record_stage_duration, record_write_transaction,
     };
 
     #[test]
@@ -609,6 +633,7 @@ mod tests {
         record_sliced_spans(3);
         record_embedding_call(20);
         record_embedding_batches(2);
+        record_embedding_call_size(2);
         record_embedding_vectors(3);
         record_write_transaction();
         record_read_transaction();
@@ -625,6 +650,7 @@ mod tests {
         assert_eq!(snapshot.sliced_spans(), 3);
         assert_eq!(snapshot.embedding_calls(), 1);
         assert_eq!(snapshot.embedding_batches(), 2);
+        assert_eq!(snapshot.max_embedding_call_size(), 2);
         assert_eq!(snapshot.embedding_input_bytes(), 20);
         assert_eq!(snapshot.embedding_vectors(), 3);
         assert_eq!(snapshot.write_transactions(), 1);

@@ -11,7 +11,7 @@ use scry::{
     Text,
 };
 
-use crate::native_memory::{MaximumObservedMemory, Sampler};
+use crate::native_memory::{MaximumObservedMemory, ResidentMemoryKind, Sampler};
 
 pub(crate) const SCALE_ID: &str = "large-single-origin-v1";
 pub(crate) const FRAGMENT_REPETITIONS: usize = 2_400;
@@ -88,12 +88,12 @@ pub(crate) fn run(
         Err(error) => return Err(error.to_string()),
     };
 
-    let sampler = Sampler::start(SAMPLE_INTERVAL)?;
-    let collector = BenchmarkCollector::start();
     let origins = BTreeSet::from([origin.clone()]);
+    let collector = BenchmarkCollector::start();
+    let sampler = Sampler::start(SAMPLE_INTERVAL)?;
     let report = store.add(&mut embed, &slice, &origins, TTL);
-    let snapshot = collector.finish();
     let native = sampler.finish()?;
+    let snapshot = collector.finish();
     let Some(result) = report.items().first() else {
         return Err("scale add report was empty".to_owned());
     };
@@ -102,7 +102,7 @@ pub(crate) fn run(
     }
     let final_embedding_bytes = validate_snapshot(&body, &snapshot, configured_microbatch_size)?;
     println!(
-        "scale={} fingerprint={} source_bytes={} tokens={} spans={} configured_microbatch_size={} cpu_arena={} embed_api_calls={} fastembed_batch_size={} fastembed_batches={} final_embedding_vectors={} final_embedding_bytes={} write_transactions={} add_outcome=upserted native_samples={} max_observed_working_set_bytes={} max_observed_secondary_bytes={} secondary_metric={} sample_interval_ms={} native_basis=process-local diagnostic; setup and model loading excluded",
+        "scale={} fingerprint={} source_bytes={} tokens={} spans={} configured_microbatch_size={} cpu_arena={} embed_api_calls={} fastembed_batch_size={} fastembed_batches={} final_embedding_vectors={} final_embedding_bytes={} write_transactions={} add_outcome=upserted native_samples={} max_observed_resident_bytes={} resident_metric={} max_observed_secondary_bytes={} secondary_metric={} sample_interval_ms={} native_basis=process-local diagnostic; setup and model loading excluded",
         SCALE_ID,
         fingerprint(&body),
         snapshot.source_bytes(),
@@ -118,11 +118,20 @@ pub(crate) fn run(
         snapshot.write_transactions(),
         native.samples,
         native.resident_bytes,
+        resident_metric(&native),
         native.secondary_bytes,
         secondary_metric(&native),
         SAMPLE_INTERVAL.as_millis(),
     );
     Ok(())
+}
+
+fn resident_metric(native: &MaximumObservedMemory) -> &'static str {
+    match native.resident_kind {
+        Some(ResidentMemoryKind::WorkingSet) => "working_set_bytes",
+        Some(ResidentMemoryKind::ResidentSet) => "resident_set_bytes",
+        None => "unsupported",
+    }
 }
 
 fn validate_snapshot(
@@ -175,9 +184,15 @@ fn validate_snapshot(
         .map_err(|_| "scale embedding call count does not fit usize".to_owned())?;
     let actual_batches = usize::try_from(snapshot.embedding_batches())
         .map_err(|_| "scale embedding batch count does not fit usize".to_owned())?;
-    if actual_calls != expected_calls || actual_batches != expected_calls {
+    let expected_max_call_size = span_count.min(configured_microbatch_size);
+    let actual_max_call_size = usize::try_from(snapshot.max_embedding_call_size())
+        .map_err(|_| "scale maximum embedding call size does not fit usize".to_owned())?;
+    if actual_calls != expected_calls
+        || actual_batches != expected_calls
+        || actual_max_call_size != expected_max_call_size
+    {
         return Err(format!(
-            "scale embedding calls did not match the configured microbatch: calls={actual_calls} batches={actual_batches} expected={expected_calls}"
+            "scale embedding calls did not match the configured microbatch: calls={actual_calls} batches={actual_batches} max_call_size={actual_max_call_size} expected_calls={expected_calls} expected_max_call_size={expected_max_call_size}"
         ));
     }
     Ok(final_embedding_bytes)

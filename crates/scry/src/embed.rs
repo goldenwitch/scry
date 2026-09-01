@@ -286,6 +286,7 @@ impl Embed {
             return Err(io::Error::other("embedding input byte count overflowed"));
         };
         crate::benchmark::record_embedding_call(input_bytes);
+        crate::benchmark::record_embedding_call_size(texts.len());
         crate::benchmark::record_embedding_batches(texts.len().div_ceil(FASTEMBED_BATCH_SIZE));
         let values = self
             .embedder
